@@ -17,12 +17,12 @@ compaction modules only remind or enable.
 
 ## Modules
 
-All modules are planned; this repo currently ships scaffolding only.
+`output-cap` is active; the remaining modules are planned per phase.
 
 | Module | Event | Status | Purpose |
 | --- | --- | --- | --- |
 | `input-gate` | PreToolUse (Bash + Read) | 🚧 planned — Phase 1 | Deny firehose commands/reads (recursive traversal, unbounded logs, huge diffs, remote payloads, large/generated-file reads) with a bounded alternative in the reason |
-| `output-cap` | PostToolUse (Bash) | 🚧 planned — Phase 1 | Denoise (ANSI/progress bars) then truncate oversized stdout via `replaceToolOutput` |
+| `output-cap` | PostToolUse (Bash) | ✅ active | Truncate oversized Bash stdout (head + tail, keep stderr) via `replaceToolOutput`; denoise TBD |
 | `read-once` | PreToolUse (Read) | 🚧 planned — Phase 2 | Deny re-reading a file already in context (path + mtime + range, compaction-aware) |
 | `ctx-budget` | PostToolUse + Stop | 🚧 planned — Phase 2 | Context HUD + tier reminders (50/70/90%) + top-consumer attribution; the gated `/compact` reminder lives here |
 | `transcript-vault` | PreCompact | 🚧 planned — Phase 3 | Back up the transcript before compaction so aggressive compaction is safe |
