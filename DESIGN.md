@@ -130,7 +130,17 @@ remote-payload / output-volume(Read+Bash 뷰어). **`bash-guard`/`git-guard`와 
 - 버전: CC ≥ v2.1.121 필요(이전 버전은 무해한 no-op).
 - 감사로그: 원본이 필요하면 별도 파일 로깅(선택). (`claude-hooks` 미설치 환경 대비.)
 
-### 6.3 `read-once` — PreToolUse (Read) · [phase 2]
+### 6.3 `read-once` — PreToolUse (Read) · [**기각 — 기회 크기 측정 탈락, 2026-07-04**]
+
+> **기각 근거 (실측):** 로컬 트랜스크립트 29개 전수 채굴 결과, 동일 세션 내
+> 중복 read(같은 경로+범위)는 전체 Read 트래픽의 **1.6%** — 19회 / 20,090자
+> ≈ 5,000토큰(전 역사 합계), 세션당 **~43토큰**. 이것도 상한(파일 변경 후·
+> 컴팩션 후의 정당한 재-read 포함). 대상도 소형 설정 파일뿐. 반면 이 모듈은
+> 플러그인 전체에서 오탐 리스크(컴팩션 후 필요한 read 차단→잘못된 수정)와
+> 구현 복잡도(트랜스크립트 스캔+상태)가 최대다. **최소 이득에 최대 리스크 —
+> 만들지 않는 것이 옳다.** 하네스가 "수정 후 재-read 불필요" 리마인더로 이미
+> 중복을 억제하고 있는 것이 낮은 기회의 원인으로 보인다. 아래 원 설계는
+> 기록용으로 남긴다.
 
 같은 파일을 이미 컨텍스트에 넣었으면 재-read를 `deny`("위 내용을 재사용하라").
 
@@ -141,12 +151,16 @@ remote-payload / output-volume(Read+Bash 뷰어). **`bash-guard`/`git-guard`와 
   deny(mtime/범위는 빠른 사전필터, TTL은 백업).
 - 안티-핑퐁: 직전이 동일 경로 read-once deny였으면 `pass()`. `deny`는 bypass 모드에서도 유효.
 
-### 6.4 `ctx-budget` — PostToolUse (`*`) + Stop · [phase 2, 관측/넛지]
+### 6.4 `ctx-budget` — PostToolUse (`*`) · [phase 2, 관측/넛지 — 스펙 확정 2026-07-04]
 
 컨텍스트 사용량을 가시화하고 임계에서 `/compact`를 리마인드(강제 아님).
 
-- usage 합산 → % 계산 → `emitSystemMessage()`로 티어 경보(50/70/90%). 티어당 1회(디바운스).
-- Stop 시 상위 토큰 소비 툴콜 랭킹 → "무엇을 줄일지" 귀속.
+- 트랜스크립트 꼬리의 마지막 main-chain usage(input+cache_read+cache_creation)
+  → % 계산(`ACP_CTX_BUDGET_WINDOW`) → `emitSystemMessage()`로 **10% 티어마다
+  1회** 경보(상향 교차 시만, 컴팩션으로 하락하면 사다리 리셋). 경계/usage 포맷은
+  `docs/transcript.md`(실증) 참조. sidechain(서브에이전트) usage 제외.
+- **50%부터** 경보에 `/compact` 권고 + 귀속(마지막 컴팩션 경계 이후 상위 소비
+  툴콜 3개) 부착. Stop 이벤트 대신 경보 발화 시점에 귀속을 붙이는 것으로 단순화.
 - **사용자의 원래 아이디어("PR 머지 후 `/compact` 리마인드")의 강화판이 여기 들어간다:**
   머지 큐 + **"컨텍스트가 이미 ~50% 이상일 때만" 발화**하도록 threshold로 게이팅 → 깨끗한 의미
   경계 + 실제 예산 신호를 함께 만족(§8 참고).
@@ -171,7 +185,7 @@ SessionStart 주입이 현행 버전에서 모델에 보이는지 먼저 확인 
 - **Phase 0 — 스캐폴딩:** `plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` 뼈대,
   `lib/hook-io.mjs`(+ 신규 헬퍼 3종), `AGENTS.md`/`README.md`.
 - **Phase 1 — MVP(하드 레버):** `input-gate` + `output-cap`. 절감의 대부분을 여기서 확보.
-- **Phase 2 — 상태/관측:** `read-once` + `ctx-budget`.
+- **Phase 2 — 상태/관측:** ~~`read-once`~~(기각, §6.3) + `ctx-budget`.
 - **Phase 3 — 인에이블러:** `transcript-vault`, 그리고 `frugal-directive` 실험.
 
 각 단계는 별도 PR. (main 직접 푸시 금지 — 브랜치+PR.)
