@@ -189,17 +189,31 @@ try {
   const now = Date.now();
   const COOLDOWN = 300000;
 
-  // Merge nudge: a clean semantic boundary while context is heavy. The match
-  // is anchored to the start of a command SEGMENT, so a command that merely
-  // mentions the phrase (echo "gh pr merge ...", grep, commit messages) does
-  // not fire — see finding F1 in the PR.
+  // Merge nudge: a clean semantic boundary while context is heavy. Two
+  // detection paths, both anchored to the start of a command SEGMENT so mere
+  // mentions (echo "gh pr merge ...") don't fire:
+  //  (a) an in-session `gh pr merge` — mostly dormant in an agent-merges-
+  //      banned workflow (a git-guard deny means PostToolUse never fires),
+  //      kept for setups where merges do run in-session;
+  //  (b) merge EVIDENCE: a `git pull` that actually brought new commits
+  //      (stdout shows "Updating a1b2c3..d4e5f6" / "Fast-forward"). In a
+  //      human-merges workflow this is the reliable in-session signal — the
+  //      agent pulls right after the user merges. "Already up to date" stays
+  //      silent.
   const segments = (input?.tool_input?.command ?? "")
     .split(/(?:&&|\|\||[;\n|])/)
     .map((s) => s.trim());
-  const isMerge =
-    input?.tool_name === "Bash" &&
+  const stdout = input?.tool_response?.stdout ?? "";
+  const isBash = input?.tool_name === "Bash";
+  const isMergeCmd =
+    isBash &&
     segments.some((s) => /^gh\s+pr\s+merge\b/.test(s)) &&
     !/error|failed/i.test(input?.tool_response?.stderr ?? "");
+  const isMergeEvidence =
+    isBash &&
+    segments.some((s) => /^git(?:\s+-C\s+\S+)?\s+pull\b/.test(s)) &&
+    (/Updating [0-9a-f]+\.\.+[0-9a-f]+/.test(stdout) || /Fast-forward/.test(stdout));
+  const isMerge = isMergeCmd || isMergeEvidence;
 
   let wantTier = tier > lastTier;
   let wantMerge =
@@ -230,8 +244,9 @@ try {
 
   const messages = [];
   if (wantMerge) {
+    const src = isMergeCmd ? "PR 머지 감지" : "머지 반영 감지(git pull 새 커밋)";
     messages.push(
-      `[ctx-budget] PR 머지 감지 + 컨텍스트 ${pct}% — 의미 경계인 지금이 /compact 최적 타이밍입니다.`,
+      `[ctx-budget] ${src} + 컨텍스트 ${pct}% — 의미 경계인 지금이 /compact 최적 타이밍입니다.`,
     );
   }
   if (wantTier) {

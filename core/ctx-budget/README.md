@@ -18,11 +18,20 @@ to fix) timely and evidence-based.
   (`상위 소비: Bash(npm test…) ~9.2k tok · Read(DESIGN.md) ~3.1k tok · …`),
   computed from tool_use/tool_result pairs in the transcript. Attribution runs
   only when an alert actually fires.
-- **Merge nudge:** a successful-looking `gh pr merge` while context ≥ 50%
-  gets its own message — a merge is a clean semantic boundary, so it is the
-  highest-quality `/compact` moment. Below the threshold: silence (compacting
-  a small context is a net loss: summary cost + cache reset for ~no gain).
-  5-minute cooldown between merge nudges.
+- **Merge nudge:** while context ≥ 50%, a merge moment gets its own message —
+  a merge is a clean semantic boundary, so it is the highest-quality
+  `/compact` moment. Two detection paths (segment-anchored, so mere mentions
+  don't fire):
+  - an in-session `gh pr merge` — mostly dormant in an agent-merges-banned
+    workflow (a git-guard deny means PostToolUse never fires); kept for
+    setups where merges do run in-session;
+  - **merge evidence**: a `git pull` whose output shows new commits actually
+    arrived (`Updating a1b..d4e` / `Fast-forward`). In a human-merges
+    workflow this is the reliable in-session signal — the agent pulls right
+    after the user merges. `Already up to date` stays silent.
+
+  Below the threshold: silence (compacting a small context is a net loss:
+  summary cost + cache reset for ~no gain). 5-minute cooldown.
 
 ## How it measures
 
