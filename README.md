@@ -17,14 +17,16 @@ compaction modules only remind or enable.
 
 ## Modules
 
-Phase 1 (`input-gate` + `output-cap`) is active; the rest are planned per phase.
+Phase 1 (`input-gate` + `output-cap`) and Phase 2 (`ctx-budget`, `analyze`)
+are active; the rest are planned per phase.
 
 | Module | Event | Status | Purpose |
 | --- | --- | --- | --- |
 | `input-gate` | PreToolUse (Bash + Read) | ✅ active | Deny firehose commands/reads (never-ending follow modes, recursive traversal, unbounded logs, oversized diffs, remote payloads, large/generated-file reads) with a bounded alternative in the reason |
 | `output-cap` | PostToolUse (Bash) | ✅ active | Shrink oversized Bash stdout/stderr via `replaceToolOutput`: denoise (ANSI, `\r` overwrites, blank runs) then head+tail truncate |
 | `read-once` | PreToolUse (Read) | ❌ rejected — measured | Duplicate-read prevention; killed by opportunity sizing (29 transcripts mined: dup reads = 1.6% of Read traffic, ~43 tok/session upper bound vs the plugin's riskiest false-deny profile — see DESIGN.md §6.3) |
-| `ctx-budget` | PostToolUse (`*`) | ✅ active | Context HUD: alert at every 10% tier, `/compact` recommendation + top-consumer attribution from 50%, merge-moment nudge (`gh pr merge` + ≥50%) |
+| `ctx-budget` | PostToolUse (`*`) + UserPromptSubmit | ✅ active | Context HUD: alert at every 10% tier, `/compact` recommendation + top-consumer attribution from 50%, semantic-boundary nudges (merge evidence, PR create, branch cleanup) |
+| `analyze` | — (CLI + user-invoked skill, not a hook) | ✅ active | Offline diagnostics over transcripts: pattern-family spend totals, output-cap/deny ledger, rule proposals, `--precise` usage-delta attribution. In-session: `/agent-context-protector:analyze` |
 | `transcript-vault` | PreCompact | 🚧 planned — Phase 3 | Back up the transcript before compaction so aggressive compaction is safe |
 | `frugal-directive` | SessionStart | 💭 optional | Inject a short token-frugality charter (version-dependent) |
 
