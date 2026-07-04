@@ -189,35 +189,62 @@ try {
   const now = Date.now();
   const COOLDOWN = 300000;
 
-  // Merge nudge: a clean semantic boundary while context is heavy. Two
-  // detection paths, both anchored to the start of a command SEGMENT so mere
-  // mentions (echo "gh pr merge ...") don't fire:
-  //  (a) an in-session `gh pr merge` — mostly dormant in an agent-merges-
-  //      banned workflow (a git-guard deny means PostToolUse never fires),
-  //      kept for setups where merges do run in-session;
-  //  (b) merge EVIDENCE: a `git pull` that actually brought new commits
-  //      (stdout shows "Updating a1b2c3..d4e5f6" / "Fast-forward"). In a
-  //      human-merges workflow this is the reliable in-session signal — the
-  //      agent pulls right after the user merges. "Already up to date" stays
-  //      silent.
+  // Semantic-boundary nudge: moments when finished work makes /compact
+  // cheapest. Rules are a data table (add a boundary = add one entry); every
+  // command test is anchored to the start of a shell SEGMENT so mere mentions
+  // (echo "gh pr merge ...") don't fire, and each requires positive evidence
+  // of success in the output. All rules share the >=COMPACT_PCT gate and ONE
+  // cooldown, so a post-merge cluster (pull -> branch -d -> next pr create)
+  // nudges once, not three times. Frequencies from mining 29 local sessions:
+  // pr create 33 · pull 13 · branch -d 11 · gh pr merge 4.
   const segments = (input?.tool_input?.command ?? "")
     .split(/(?:&&|\|\||[;\n|])/)
     .map((s) => s.trim());
   const stdout = input?.tool_response?.stdout ?? "";
-  const isBash = input?.tool_name === "Bash";
-  const isMergeCmd =
-    isBash &&
-    segments.some((s) => /^gh\s+pr\s+merge\b/.test(s)) &&
-    !/error|failed/i.test(input?.tool_response?.stderr ?? "");
-  const isMergeEvidence =
-    isBash &&
-    segments.some((s) => /^git(?:\s+-C\s+\S+)?\s+pull\b/.test(s)) &&
-    (/Updating [0-9a-f]+\.\.+[0-9a-f]+/.test(stdout) || /Fast-forward/.test(stdout));
-  const isMerge = isMergeCmd || isMergeEvidence;
+  const stderr = input?.tool_response?.stderr ?? "";
+
+  // [label for the message, test(segments, stdout, stderr)]
+  const BOUNDARY_RULES = [
+    [
+      // In-session merge — dormant when agent merges are guard-denied
+      // (PostToolUse never fires); kept for setups that do merge in-session.
+      "PR 머지 감지",
+      () => segments.some((s) => /^gh\s+pr\s+merge\b/.test(s)) && !/error|failed/i.test(stderr),
+    ],
+    [
+      // Merge evidence: a pull that actually brought new commits. In a
+      // human-merges workflow this is the reliable in-session signal.
+      "머지 반영 감지(git pull 새 커밋)",
+      () =>
+        segments.some((s) => /^git(?:\s+-C\s+\S+)?\s+pull\b/.test(s)) &&
+        (/Updating [0-9a-f]+\.\.+[0-9a-f]+/.test(stdout) || /Fast-forward/.test(stdout)),
+    ],
+    [
+      // PR created (top-frequency boundary): work is packaged for review,
+      // implementation trial-and-error detail is now safe to compact away.
+      "PR 생성 감지",
+      () =>
+        segments.some((s) => /^gh\s+pr\s+create\b/.test(s)) &&
+        /github\.com\/\S+\/pull\/\d+/.test(stdout),
+    ],
+    [
+      // Post-merge branch cleanup: the unit of work is formally closed.
+      "브랜치 정리 감지",
+      () =>
+        segments.some((s) =>
+          /^git(?:\s+-C\s+\S+)?\s+branch\s+(?:-[a-zA-Z]*[dD]\b|--delete\b)/.test(s),
+        ) && /Deleted branch/.test(stdout),
+    ],
+  ];
+
+  const boundary =
+    input?.tool_name === "Bash" ? BOUNDARY_RULES.find(([, test]) => test()) : undefined;
 
   let wantTier = tier > lastTier;
   let wantMerge =
-    isMerge && pct >= COMPACT_PCT && (!state.lastMergeTs || now - state.lastMergeTs > COOLDOWN);
+    Boolean(boundary) &&
+    pct >= COMPACT_PCT &&
+    (!state.lastMergeTs || now - state.lastMergeTs > COOLDOWN);
 
   if (!wantTier && !wantMerge) {
     if (tier < lastTier) {
@@ -244,9 +271,8 @@ try {
 
   const messages = [];
   if (wantMerge) {
-    const src = isMergeCmd ? "PR 머지 감지" : "머지 반영 감지(git pull 새 커밋)";
     messages.push(
-      `[ctx-budget] ${src} + 컨텍스트 ${pct}% — 의미 경계인 지금이 /compact 최적 타이밍입니다.`,
+      `[ctx-budget] ${boundary[0]} + 컨텍스트 ${pct}% — 의미 경계인 지금이 /compact 최적 타이밍입니다.`,
     );
   }
   if (wantTier) {

@@ -18,20 +18,23 @@ to fix) timely and evidence-based.
   (`상위 소비: Bash(npm test…) ~9.2k tok · Read(DESIGN.md) ~3.1k tok · …`),
   computed from tool_use/tool_result pairs in the transcript. Attribution runs
   only when an alert actually fires.
-- **Merge nudge:** while context ≥ 50%, a merge moment gets its own message —
-  a merge is a clean semantic boundary, so it is the highest-quality
-  `/compact` moment. Two detection paths (segment-anchored, so mere mentions
-  don't fire):
-  - an in-session `gh pr merge` — mostly dormant in an agent-merges-banned
-    workflow (a git-guard deny means PostToolUse never fires); kept for
-    setups where merges do run in-session;
-  - **merge evidence**: a `git pull` whose output shows new commits actually
-    arrived (`Updating a1b..d4e` / `Fast-forward`). In a human-merges
-    workflow this is the reliable in-session signal — the agent pulls right
-    after the user merges. `Already up to date` stays silent.
+- **Boundary nudge:** while context ≥ 50%, a semantic-boundary moment —
+  finished work whose detail is now safe to compact away — gets its own
+  message. Rules are a data table (adding a boundary = one entry); each is
+  segment-anchored (mere mentions don't fire) and requires positive success
+  evidence in the output. Frequencies from mining 29 local sessions in
+  parentheses:
+
+  | Boundary rule | Evidence required | Mined freq |
+  | --- | --- | --- |
+  | PR created (`gh pr create`) | PR URL in stdout | 33 |
+  | Merge evidence (`git pull`) | `Updating a1b..d4e` / `Fast-forward`; `Already up to date` is silent | 13 |
+  | Branch cleanup (`git branch -d/-D`) | `Deleted branch` in stdout | 11 |
+  | In-session `gh pr merge` | no error in stderr; dormant when agent merges are guard-denied | 4 |
 
   Below the threshold: silence (compacting a small context is a net loss:
-  summary cost + cache reset for ~no gain). 5-minute cooldown.
+  summary cost + cache reset for ~no gain). One shared 5-minute cooldown, so
+  a post-merge cluster (pull → branch -d → next pr create) nudges once.
 
 ## How it measures
 
