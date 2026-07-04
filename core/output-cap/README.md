@@ -3,10 +3,19 @@
 **Event:** PostToolUse (matcher `Bash`) · **Mechanism:** `replaceToolOutput`
 (updatedToolOutput) · **Never blocks.**
 
-Shrinks oversized Bash `stdout` before it is committed to context. Keeps the head
-and tail (where the signal usually sits) and drops the middle, replacing it with a
-marker that records how much was cut. `stderr` and every other field are left
-untouched, so errors and exit context survive.
+Shrinks oversized Bash output before it is committed to context, in two steps:
+
+1. **Denoise (lossless-ish):** strip what a terminal would not display anyway —
+   ANSI escape sequences (colors, cursor moves, OSC titles), `\r` progress-bar
+   overwrites (only the text after the last `\r` of a line survives on screen;
+   CRLF line endings are preserved), and runs of blank lines.
+2. **Truncate:** if still over budget, keep the head and tail (where the signal
+   usually sits) and drop the middle, replacing it with a marker that records
+   how much was cut.
+
+If denoising alone brings a field under budget, that is all that happens — no
+marker, nothing dropped. Fields other than `stdout`/`stderr` are preserved, so
+errors and exit context survive.
 
 Bash output is the single largest token sink in a session, and a capped result
 keeps saving on every later turn (the whole context is re-sent each turn until
@@ -20,7 +29,8 @@ which command misbehaves — it caps whatever comes back too large.
   — `stdout` and `stderr` are capped independently, other fields preserved. A
   bare-string result is handled as a defensive fallback.
 - Image results (`isImage`) and non-string fields are left untouched.
-- Output within budget is left untouched (no marker, no change).
+- Output within budget is left untouched (no marker, no change) — the trigger
+  is size, not content, so small colored output keeps its ANSI codes.
 - Never inflates: if the truncated result would not be smaller than the original,
   the output is left untouched.
 - Slice boundaries never split a surrogate pair (no broken glyphs at the seam).
