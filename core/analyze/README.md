@@ -22,8 +22,8 @@ what they caught, what they missed, and what rule to add next.
 
 ## Report sections
 
-0. **Usage totals / by day / by session** — billed-token accounting straight
-   from the transcript `usage` fields: output, fresh input
+0. **Usage totals / by day / by session / cost** — billed-token accounting
+   straight from the transcript `usage` fields: output, fresh input
    (input + cache_creation), and cache reads (the per-turn context resend this
    plugin exists to shrink), split main agent vs subagents. The same numbers
    are then grouped **per local day** and **per session** (= work unit,
@@ -31,6 +31,20 @@ what they caught, what they missed, and what rule to add next.
    One API response is logged as several transcript entries duplicating the
    same `usage` — totals dedupe by message id (measured: 182 entries vs 87
    distinct ids on one real session, so naive summing would ~double).
+
+   Every row also carries an **estimated $ cost** from a per-model price
+   table (API list prices; basis date printed in the report). Each usage
+   entry is priced by its own `message.model` (present on 100% of real
+   entries, verified 2026-07-04), so mid-session model switches price
+   correctly. Cache writes are split by TTL — `ephemeral_5m` at 1.25x /
+   `ephemeral_1h` at 2x base input (real CC traffic is all 1h, so a flat
+   1.25x would understate writes) — and cache reads at 0.1x. A
+   `## cost by model` section shows the token/cost split per model. Unknown
+   models (`<synthetic>`, future ids) are never guessed: they show as
+   unpriced rows excluded from $ totals. Caveats: prices are code constants
+   (update on repricing; Sonnet 5 intro pricing not applied), and for
+   subscription (Max) usage the $ figures are an API-equivalent reference,
+   not an actual bill.
 1. **Pattern totals** — tool calls normalized to families (`npm test`,
    `git diff`, `Read(*.md)`) via `lib/patterns.mjs` (shared with ctx-budget
    attribution, #8): calls · ~tokens (chars/4) · share · sessions touched.
@@ -58,8 +72,8 @@ what they caught, what they missed, and what rule to add next.
 | `--project <dir>` | Only that project dir name (e.g. `-home-renoir-repo`) |
 | `--since <ISO>` | Skip entries older than this timestamp |
 | `--top N` | Rows in the pattern table (default 20) |
-| `--full` | Every pattern row (overrides `--top`); by-day / by-session are always complete |
-| `--json <path>` | Also write the full structured report (incl. `usage`, `byDay`, `bySession`) |
+| `--full` | Every pattern row (overrides `--top`) |
+| `--json <path>` | Also write the full structured report (+ cost fields) |
 | `--precise` | usage-delta token attribution (slower, adds a column) |
 
 `ACP_ANALYZE_ROOT` overrides the transcript root (used by tests).
