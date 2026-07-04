@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-// ctx-budget (PostToolUse / *): context-usage HUD + /compact nudges. Purely
-// observational — emits a user-facing systemMessage, never touches the model's
-// context and never blocks.
+// ctx-budget (PostToolUse / * + UserPromptSubmit): context-usage HUD +
+// /compact nudges. Purely observational — emits a user-facing systemMessage,
+// never touches the model's context and never blocks. The UserPromptSubmit
+// wiring makes tier alerts also fire at the one moment a human can actually
+// type /compact; on that event there is no tool payload, so boundary rules
+// simply don't apply and the tier ladder still debounces everything.
 //
 //   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중").
 //   - From 50% on, the alert adds a /compact recommendation plus the top
