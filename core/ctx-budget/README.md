@@ -1,7 +1,13 @@
 # ctx-budget
 
-**Event:** PostToolUse (matcher `*`) · **Mechanism:** `systemMessage` (user-facing)
-· **Never blocks, never touches the model's context.**
+**Events:** PostToolUse (matcher `*`) + UserPromptSubmit · **Mechanism:**
+`systemMessage` (user-facing) · **Never blocks, never touches the model's
+context.**
+
+The UserPromptSubmit wiring exists because PostToolUse alerts land mid-turn,
+between tool executions; firing on prompt submit as well puts the alert at the
+one moment the human can actually type `/compact`. The tier ladder debounces
+across both events (shared state), so nothing fires twice.
 
 Context-usage HUD + `/compact` nudges. This module saves no tokens by itself —
 it makes the two decisions that do save tokens (when to `/compact`, what habit
