@@ -158,7 +158,8 @@ remote-payload / output-volume(Read+Bash 뷰어). **`bash-guard`/`git-guard`와 
 - 트랜스크립트 꼬리의 마지막 main-chain usage(input+cache_read+cache_creation)
   → % 계산(`ACP_CTX_BUDGET_WINDOW`) → `emitSystemMessage()`로 **10% 티어마다
   1회** 경보(상향 교차 시만, 컴팩션으로 하락하면 사다리 리셋). 경계/usage 포맷은
-  `docs/transcript.md`(실증) 참조. sidechain(서브에이전트) usage 제외.
+  실물 트랜스크립트로 실증해 구현(CC 내부 포맷 — 확장 시 재검증 + fail-open).
+  sidechain(서브에이전트) usage 제외.
 - **50%부터** 경보에 `/compact` 권고 + 귀속(마지막 컴팩션 경계 이후 상위 소비
   툴콜 3개) 부착. Stop 이벤트 대신 경보 발화 시점에 귀속을 붙이는 것으로 단순화.
 - **사용자의 원래 아이디어("PR 머지 후 `/compact` 리마인드")의 강화판이 여기 들어간다:**

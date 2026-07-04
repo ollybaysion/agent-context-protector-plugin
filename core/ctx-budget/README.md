@@ -41,9 +41,10 @@ to fix) timely and evidence-based.
 Context size = `input + cache_read + cache_creation` from the last main-chain
 (`isSidechain !== true`) assistant `usage` entry in the transcript; only the
 file tail (~256KB) is read per event. Compaction boundaries are
-`{"type":"system","subtype":"compact_boundary"}` entries. Format knowledge is
-documented in [docs/transcript.md](../../docs/transcript.md) — pinned against
-real transcripts, not guessed.
+`{"type":"system","subtype":"compact_boundary"}` entries. All transcript
+format knowledge here was pinned against real transcripts (CC 2.1.198), not
+guessed — the format is CC-internal, so re-verify against a live transcript
+before extending any parsing, and always fail open.
 
 ## Config
 
