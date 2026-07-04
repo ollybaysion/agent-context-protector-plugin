@@ -22,6 +22,15 @@ what they caught, what they missed, and what rule to add next.
 
 ## Report sections
 
+0. **Usage totals / by day / by session** — billed-token accounting straight
+   from the transcript `usage` fields: output, fresh input
+   (input + cache_creation), and cache reads (the per-turn context resend this
+   plugin exists to shrink), split main agent vs subagents. The same numbers
+   are then grouped **per local day** and **per session** (= work unit,
+   labeled with the session's AI title, chronological, always the full list).
+   One API response is logged as several transcript entries duplicating the
+   same `usage` — totals dedupe by message id (measured: 182 entries vs 87
+   distinct ids on one real session, so naive summing would ~double).
 1. **Pattern totals** — tool calls normalized to families (`npm test`,
    `git diff`, `Read(*.md)`) via `lib/patterns.mjs` (shared with ctx-budget
    attribution, #8): calls · ~tokens (chars/4) · share · sessions touched.
@@ -49,7 +58,8 @@ what they caught, what they missed, and what rule to add next.
 | `--project <dir>` | Only that project dir name (e.g. `-home-renoir-repo`) |
 | `--since <ISO>` | Skip entries older than this timestamp |
 | `--top N` | Rows in the pattern table (default 20) |
-| `--json <path>` | Also write the full structured report |
+| `--full` | Every pattern row (overrides `--top`); by-day / by-session are always complete |
+| `--json <path>` | Also write the full structured report (incl. `usage`, `byDay`, `bySession`) |
 | `--precise` | usage-delta token attribution (slower, adds a column) |
 
 `ACP_ANALYZE_ROOT` overrides the transcript root (used by tests).
