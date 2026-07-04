@@ -104,13 +104,17 @@ remote-payload / output-volume(Read+Bash 뷰어). **`bash-guard`/`git-guard`와 
 
 | 카테고리 | 트리거(예) | 조치 | 대안 제시 |
 | --- | --- | --- | --- |
-| 재귀 순회 | `ls -R`/`tree` w/o `-L`, `du` w/o `-sh`, `rg -uu` (node_modules/.git/dist// 타겟) | deny | `ls -R -L2`, `fd -t d -d2`, `du -sh` |
-| 무제한 로그 | `journalctl`/`docker logs`/`kubectl logs`/`pm2 logs`/`tail -f` w/o `--tail`·`-n` | deny | `--tail 200` / `-n 200` |
-| 대형 diff | `git diff`/`git log -p` → `git --numstat`로 실측 후 임계 초과 | deny | `--stat` 후 파일별 |
-| 원격 페이로드 | `curl`/`wget` 무분기 body | deny | 파일 저장 후 `jq`/부분 read |
+| 재귀 순회 | `ls -R`, `tree` w/o `-L`, `du` w/o `-s`/`-d` | deny | `ls DIR`(1단계), `fd -t d -d2`, `tree -L2`, `du -sh` — ※`ls -L`은 depth가 아니라 심링크 역참조라 대안 불가(구현 검증에서 정정) |
+| follow 모드 | `tail -f`, `journalctl -f`, `docker/kubectl logs -f`, `pm2 logs`(기본 스트리밍, `--nostream` 필요) — 타임아웃까지 hang이므로 파이프 여부 무관 deny | deny | `-n 200` / `--tail 200` / `--nostream` |
+| 무제한 로그 | `journalctl`/`docker logs`/`kubectl logs` w/o `--tail`·`-n` | deny | `--tail 200` / `-n 200` |
+| 대형 diff | `git log -p` w/o 개수 제한; `git diff` → `--shortstat`로 실측 후 임계 초과(단순형만, 복합/확장 구문은 pass) | deny | `--stat` 후 파일별 |
+| 원격 페이로드 | `curl` 무분기 body; `wget`은 **`-O-`(stdout 모드)만** — 기본 동작은 파일 저장이라 무해(구현 검증에서 정정) | deny | 파일 저장 후 `jq`/부분 read |
 | 대용량/생성물 read | `offset`/`limit` 없고 `statSync` > ~256KB, 또는 생성물(`*.min.js`, `*-lock.*`, 단일라인 blob) | deny | `rg`/`jq`/페이징 read |
 
-- 파싱/경로 불확실(상대·glob·변수) → `pass()`/`failOpen()`(fail open).
+- 파싱/경로 불확실(상대·glob·변수) → `pass()`/`failOpen()`(fail open). 같은 이유로
+  `rg -uu` 규칙(명시 경로 유무 파싱 불가)은 구현에서 제외(구현 검증에서 결정).
+- 파이프/리다이렉트가 있으면 하류에서 바운딩될 수 있으므로 volume 규칙은 pass
+  (follow 모드는 예외 — 파이프여도 hang).
 - 정직한 한계: CC가 이미 초대형 read를 "부분 뷰 첫 페이지"로 절단하므로 실질 이득은
   대형 페이지 1개 + 줄번호 오버헤드(~70%) 회피 + rg/jq 유도. 그래도 유효.
 
