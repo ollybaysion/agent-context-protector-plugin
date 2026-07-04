@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // output-cap (PostToolUse / Bash): shrink oversized Bash output before it is
-// committed to context, using replaceToolOutput (updatedToolOutput). Keeps the
-// head and tail (where the signal usually is) and drops the middle, leaving a
-// marker with how much was cut. stdout and stderr are capped independently;
-// every other field is preserved.
+// committed to context, using replaceToolOutput (updatedToolOutput). Two-step
+// pipeline (DESIGN.md §6.2): ① denoise — strip ANSI escapes, \r progress-bar
+// overwrites and blank-line runs (what a terminal would not display anyway);
+// ② if still over budget, keep the head and tail (where the signal usually
+// is) and drop the middle, leaving a marker with how much was cut. stdout and
+// stderr are shrunk independently; every other field is preserved.
 //
 // It never blocks (never exit 2); any error fails open. Requires Claude Code
 // >= v2.1.121 for updatedToolOutput on built-in tools — older builds ignore it,
@@ -48,10 +50,42 @@ function tailSlice(s, n) {
   return s.slice(start);
 }
 
-// Return a capped copy of `text`, or null if it is already within budget OR the
-// capped result would not actually be smaller (never inflate the payload).
+// Step ① — lossless-ish denoise: strip what a terminal would not display
+// anyway. ANSI escape sequences (colors, cursor moves, OSC titles), \r
+// progress-bar overwrites (keep only what survives on screen: the text after
+// the last \r of each line), and runs of blank lines. Only invoked once a
+// field is over budget, so small outputs are never touched.
+function denoise(text) {
+  let t = text;
+  // CSI (colors, cursor). Param bytes include ECMA-48's : < = > (truecolor SGR
+  // variants, private sequences).
+  t = t.replace(/\x1b\[[0-9;:<=>?]*[ -/]*[@-~]/g, "");
+  // OSC (titles, links). The terminator (BEL or ST) is REQUIRED: with an
+  // optional terminator an unterminated \x1b] (e.g. output killed mid-write)
+  // would swallow everything to end-of-string — silent content loss.
+  t = t.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  // Stray two-char escapes. The u flag makes . consume a full code point, so
+  // ESC before an emoji cannot split its surrogate pair. A final sweep drops
+  // any ESC left dangling (before \n / at EOF / unterminated OSC lead-in).
+  t = t.replace(/\x1b./gu, "");
+  t = t.replace(/\x1b/g, "");
+  t = t
+    .split("\n")
+    .map((line) => {
+      // CRLF line endings are not overwrites — drop the trailing \r first.
+      const l = line.endsWith("\r") ? line.slice(0, -1) : line;
+      // Approximates terminal rendering: overwritten progress frames drop out.
+      // (Not exact when a later frame is shorter than an earlier one.)
+      const i = l.lastIndexOf("\r");
+      return i === -1 ? l : l.slice(i + 1);
+    })
+    .join("\n");
+  t = t.replace(/\n{3,}/g, "\n\n"); // collapse blank-line runs
+  return t;
+}
+
+// Step ② — head+tail truncation with a marker recording what was cut.
 function capText(text) {
-  if (typeof text !== "string" || text.length <= MAX_CHARS) return null;
   const head = headSlice(text, HEAD_CHARS);
   const tail = tailSlice(text, TAIL_CHARS);
   const dropped = text.length - head.length - tail.length;
@@ -59,8 +93,18 @@ function capText(text) {
     `\n\n[... output-cap: dropped ${dropped} of ${text.length} chars ` +
     `(~${approxTokens(dropped)} tokens) from the middle. Re-run with a narrower ` +
     `command (rg, head -n, --tail) if you need the omitted part. ...]\n\n`;
-  const capped = head + marker + tail;
-  return capped.length < text.length ? capped : null;
+  return head + marker + tail;
+}
+
+// Return a shrunk copy of `text`, or null if it is already within budget OR
+// shrinking would not actually make it smaller (never inflate the payload).
+// Pipeline per DESIGN.md §6.2: denoise first; truncate only if still too big.
+function shrink(text) {
+  if (typeof text !== "string" || text.length <= MAX_CHARS) return null;
+  const denoised = denoise(text);
+  const base = denoised.length < text.length ? denoised : text;
+  const result = base.length > MAX_CHARS ? capText(base) : base;
+  return result.length < text.length ? result : null;
 }
 
 try {
@@ -72,7 +116,7 @@ try {
   // Bare-string result: cap the string directly. (Built-in Bash returns an
   // object, so this branch is a defensive fallback for string-shaped results.)
   if (typeof resp === "string") {
-    const capped = capText(resp);
+    const capped = shrink(resp);
     if (capped === null) pass();
     replaceToolOutput(capped);
   }
@@ -80,8 +124,8 @@ try {
   // Object result (built-in Bash: { stdout, stderr, interrupted, isImage }).
   if (resp && typeof resp === "object" && !Array.isArray(resp)) {
     if (resp.isImage) pass(); // never touch image payloads
-    const cappedOut = capText(resp.stdout);
-    const cappedErr = capText(resp.stderr);
+    const cappedOut = shrink(resp.stdout);
+    const cappedErr = shrink(resp.stderr);
     if (cappedOut === null && cappedErr === null) pass(); // both within budget
     const next = { ...resp };
     if (cappedOut !== null) next.stdout = cappedOut;

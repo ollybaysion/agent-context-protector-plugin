@@ -22,7 +22,7 @@ Phase 1 (`input-gate` + `output-cap`) is active; the rest are planned per phase.
 | Module | Event | Status | Purpose |
 | --- | --- | --- | --- |
 | `input-gate` | PreToolUse (Bash + Read) | ✅ active | Deny firehose commands/reads (never-ending follow modes, recursive traversal, unbounded logs, oversized diffs, remote payloads, large/generated-file reads) with a bounded alternative in the reason |
-| `output-cap` | PostToolUse (Bash) | ✅ active | Truncate oversized Bash stdout (head + tail, keep stderr) via `replaceToolOutput`; denoise TBD |
+| `output-cap` | PostToolUse (Bash) | ✅ active | Shrink oversized Bash stdout/stderr via `replaceToolOutput`: denoise (ANSI, `\r` overwrites, blank runs) then head+tail truncate |
 | `read-once` | PreToolUse (Read) | 🚧 planned — Phase 2 | Deny re-reading a file already in context (path + mtime + range, compaction-aware) |
 | `ctx-budget` | PostToolUse + Stop | 🚧 planned — Phase 2 | Context HUD + tier reminders (50/70/90%) + top-consumer attribution; the gated `/compact` reminder lives here |
 | `transcript-vault` | PreCompact | 🚧 planned — Phase 3 | Back up the transcript before compaction so aggressive compaction is safe |
