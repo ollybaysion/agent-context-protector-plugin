@@ -1,11 +1,19 @@
 # analyze
 
-**Not a hook.** No hooks.json wiring — a human runs it explicitly:
+**Not a hook.** No hooks.json wiring — invoked explicitly, two ways:
 
 ```bash
+# terminal:
 node core/analyze/analyze.mjs [--project <dir-name>] [--since <ISO>] \
                               [--top N] [--json out.json] [--precise]
 ```
+
+Or inside a Claude Code session via the bundled skill
+(`skills/analyze/SKILL.md`): type `/agent-context-protector:analyze
+[same flags]` — Claude runs the CLI for the current project and interprets
+the report (top patterns with meaning, ledger highlights, a take on each
+proposal). Still human-triggered either way; the model never runs it on its
+own.
 
 Offline diagnostics over Claude Code transcript JSONL files
 (`~/.claude/projects/*/*.jsonl`, read-only). This is the feedback half of the
