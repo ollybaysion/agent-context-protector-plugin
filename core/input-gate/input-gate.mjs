@@ -21,7 +21,8 @@
 // It never blocks via exit 2; uncertain parsing and any internal error fail
 // open. Tunables: ACP_INPUT_GATE_DIFF_MAX_LINES (default 1000),
 // ACP_INPUT_GATE_READ_MAX_BYTES (262144), ACP_INPUT_GATE_ARTIFACT_MAX_BYTES
-// (65536) — each must be a positive number, else the default is used.
+// (65536), ACP_INPUT_GATE_LOG_MAX_BYTES (16384) — each must be a positive
+// number, else the default is used.
 
 import { statSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -43,6 +44,11 @@ const ARTIFACT_MAX_BYTES = positiveEnv(
   "ACP_INPUT_GATE_ARTIFACT_MAX_BYTES",
   65536,
 );
+// Log/output artifacts get a LOWER bar than lock/min artifacts: transcript
+// mining showed `.output` reads averaging ~40KB (~10k tok/call, the #1 per-call
+// waste) sailing under the 64KB ARTIFACT bar. 16KB (~4k tok) catches those
+// while sparing genuinely small logs.
+const LOG_MAX_BYTES = positiveEnv("ACP_INPUT_GATE_LOG_MAX_BYTES", 16384);
 
 // Same conservative split as bash-guard: ; && || | and newlines, so a
 // firehose can't hide behind a clean prefix (`echo ok && ls -R /`).
@@ -57,7 +63,8 @@ function splitCommands(cmd) {
 // diverted downstream — uncertain, so VOLUME rules stand down. (`2>&1` alone
 // still counts as a redirect here; that over-passes, which is the safe
 // direction for a fail-open gate.)
-const hasPipeOrRedirect = (cmd) => /(?<!\|)\|(?!\|)/.test(cmd) || /[<>]/.test(cmd);
+const hasPipeOrRedirect = (cmd) =>
+  /(?<!\|)\|(?!\|)/.test(cmd) || /[<>]/.test(cmd);
 
 // --- FOLLOW rules: checked on every segment, never skipped. -----------------
 // [test(seg) -> boolean, reason]
@@ -115,8 +122,7 @@ const VOLUME_RULES = [
     "input-gate: docker logs는 --tail 없이 컨테이너 로그 전체를 덤프한다. 'docker logs --tail 200 CONTAINER'.",
   ],
   [
-    (s) =>
-      /^kubectl\s+logs\b/.test(s) && !/\s(?:--tail\b|--since\b)/.test(s),
+    (s) => /^kubectl\s+logs\b/.test(s) && !/\s(?:--tail\b|--since\b)/.test(s),
     "input-gate: kubectl logs는 --tail 없이 로그 전체를 덤프한다. 'kubectl logs --tail=200 POD'.",
   ],
   [
@@ -137,7 +143,8 @@ const VOLUME_RULES = [
   ],
   [
     // wget saves to a file by default — only stdout mode (-O -) is a firehose.
-    (s) => /^wget\b/.test(s) && /\s-\w*O\s*-(?:\s|$)|--output-document=-/.test(s),
+    (s) =>
+      /^wget\b/.test(s) && /\s-\w*O\s*-(?:\s|$)|--output-document=-/.test(s),
     "input-gate: wget -O- 는 응답 body를 통째로 컨텍스트에 넣는다. 파일로 저장(기본 동작) 후 jq/rg로 필요한 부분만 봐라.",
   ],
 ];
@@ -148,7 +155,11 @@ const VOLUME_RULES = [
 function oversizedGitDiff(cmd, cwd) {
   if (!/^\s*git(?:\s+-C\s+\S+)?\s+diff\b/.test(cmd)) return null;
   if (/[|;&<>`$\n]/.test(cmd)) return null; // compound / expansion -> uncertain
-  if (/\s--(?:stat|shortstat|numstat|name-only|name-status|dirstat|summary)\b/.test(cmd))
+  if (
+    /\s--(?:stat|shortstat|numstat|name-only|name-status|dirstat|summary)\b/.test(
+      cmd,
+    )
+  )
     return null; // already bounded output
   // Anchored replace: a bare /\bdiff\b/ would hit a -C path containing the
   // word (git -C /tmp/diff-tools diff) and corrupt the measured command.
@@ -180,6 +191,13 @@ const VISUAL_READ = /\.(?:png|jpe?g|gif|webp|bmp|ico|pdf)$/i;
 const ARTIFACT_READ =
   /(?:\.min\.(?:js|mjs|css)|\.(?:js|css)\.map|\.bundle\.js|(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|composer\.lock|Gemfile\.lock))$/i;
 
+// Build/run output logs: dump-once, low-signal-per-token, best queried with rg.
+// `.output` is mining-proven (~10k tok/call); the rest are the same class and
+// absent in the observed corpus, so adding them carries no false-positive risk.
+// Deliberately excludes .md/.mjs/.js/.json/.txt — all normal reads (<2.5k
+// tok/call in the mine) that a gate would only false-positive on.
+const LOG_ARTIFACT_READ = /\.(?:output|log|trace|dump|ndjson)$/i;
+
 function gateRead(input) {
   const p = input?.tool_input?.file_path;
   if (!p || typeof p !== "string") pass();
@@ -197,6 +215,11 @@ function gateRead(input) {
   if (ARTIFACT_READ.test(p) && size > ARTIFACT_MAX_BYTES) {
     denyPreToolUse(
       `input-gate: 생성물 파일(${kb}KB) 통읽기는 토큰 낭비다. 특정 키는 jq, 특정 문자열은 rg로 찾고, 정말 필요하면 offset/limit으로 부분만 읽어라.`,
+    );
+  }
+  if (LOG_ARTIFACT_READ.test(p) && size > LOG_MAX_BYTES) {
+    denyPreToolUse(
+      `input-gate: 로그/실행 산출물(${kb}KB) 통읽기는 신호 대비 토큰이 크다. rg로 관심 라인만 뽑거나 offset/limit으로 부분만 읽어라.`,
     );
   }
   if (size > READ_MAX_BYTES) {
