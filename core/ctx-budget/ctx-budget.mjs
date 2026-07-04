@@ -40,7 +40,12 @@ import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readHookInput, emitSystemMessage, pass, failOpen } from "../../lib/hook-io.mjs";
+import {
+  readHookInput,
+  emitSystemMessage,
+  pass,
+  failOpen,
+} from "../../lib/hook-io.mjs";
 
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
@@ -55,7 +60,10 @@ const fmtK = (n) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 
 // ---- state (per transcript = per context) ----------------------------------
 function statePath(transcriptPath) {
-  const h = createHash("sha1").update(transcriptPath).digest("hex").slice(0, 16);
+  const h = createHash("sha1")
+    .update(transcriptPath)
+    .digest("hex")
+    .slice(0, 16);
   return join(tmpdir(), "acp", "ctx-budget", `${h}.json`);
 }
 
@@ -116,14 +124,21 @@ function currentContextTokens(transcriptPath) {
 }
 
 // ---- attribution: top context consumers since the last compact boundary ----
+// Labels are model-controlled (command text, file paths) and flow into a
+// user-facing systemMessage AND the statusline HUD, so collapse every run of
+// whitespace-or-control into one space — a plain \\s+ collapse leaves ESC and
+// other C0 control chars intact, a terminal-injection vector into the HUD.
+const cleanLabel = (s) => s.replace(/[\s\x00-\x1f\x7f]+/g, " ").trim();
 function toolLabel(name, input) {
+  const n = cleanLabel(String(name ?? ""));
   if (name === "Bash" && typeof input?.command === "string") {
-    const c = input.command.replace(/\s+/g, " ").trim();
+    const c = cleanLabel(input.command);
     return `Bash(${c.length > 28 ? c.slice(0, 28) + "…" : c})`;
   }
   const p = input?.file_path;
-  if (typeof p === "string") return `${name}(${p.split("/").pop()})`;
-  return name;
+  if (typeof p === "string")
+    return `${n}(${cleanLabel(p.split("/").pop() ?? "")})`;
+  return n;
 }
 
 async function topConsumers(transcriptPath, topN = 3) {
@@ -152,7 +167,10 @@ async function topConsumers(transcriptPath, topN = 3) {
       for (const block of content) {
         if (block?.type === "tool_use") {
           const inputChars = JSON.stringify(block.input ?? {}).length;
-          pending.set(block.id, { label: toolLabel(block.name, block.input), inputChars });
+          pending.set(block.id, {
+            label: toolLabel(block.name, block.input),
+            inputChars,
+          });
         }
         if (block?.type === "tool_result" && pending.has(block.tool_use_id)) {
           const { label, inputChars } = pending.get(block.tool_use_id);
@@ -160,7 +178,8 @@ async function topConsumers(transcriptPath, topN = 3) {
           let chars = inputChars;
           if (typeof block.content === "string") chars += block.content.length;
           else if (Array.isArray(block.content))
-            for (const c of block.content) if (c?.type === "text") chars += (c.text ?? "").length;
+            for (const c of block.content)
+              if (c?.type === "text") chars += (c.text ?? "").length;
           sums.set(label, (sums.get(label) ?? 0) + chars);
         }
       }
@@ -212,7 +231,9 @@ try {
       // In-session merge — dormant when agent merges are guard-denied
       // (PostToolUse never fires); kept for setups that do merge in-session.
       "PR 머지 감지",
-      () => segments.some((s) => /^gh\s+pr\s+merge\b/.test(s)) && !/error|failed/i.test(stderr),
+      () =>
+        segments.some((s) => /^gh\s+pr\s+merge\b/.test(s)) &&
+        !/error|failed/i.test(stderr),
     ],
     [
       // Merge evidence: a pull that actually brought new commits. In a
@@ -220,7 +241,8 @@ try {
       "머지 반영 감지(git pull 새 커밋)",
       () =>
         segments.some((s) => /^git(?:\s+-C\s+\S+)?\s+pull\b/.test(s)) &&
-        (/Updating [0-9a-f]+\.\.+[0-9a-f]+/.test(stdout) || /Fast-forward/.test(stdout)),
+        (/Updating [0-9a-f]+\.\.+[0-9a-f]+/.test(stdout) ||
+          /Fast-forward/.test(stdout)),
     ],
     [
       // PR created (top-frequency boundary): work is packaged for review,
@@ -235,13 +257,17 @@ try {
       "브랜치 정리 감지",
       () =>
         segments.some((s) =>
-          /^git(?:\s+-C\s+\S+)?\s+branch\s+(?:-[a-zA-Z]*[dD]\b|--delete\b)/.test(s),
+          /^git(?:\s+-C\s+\S+)?\s+branch\s+(?:-[a-zA-Z]*[dD]\b|--delete\b)/.test(
+            s,
+          ),
         ) && /Deleted branch/.test(stdout),
     ],
   ];
 
   const boundary =
-    input?.tool_name === "Bash" ? BOUNDARY_RULES.find(([, test]) => test()) : undefined;
+    input?.tool_name === "Bash"
+      ? BOUNDARY_RULES.find(([, test]) => test())
+      : undefined;
 
   let wantTier = tier > lastTier;
   let wantMerge =
@@ -252,6 +278,8 @@ try {
   if (!wantTier && !wantMerge) {
     if (tier < lastTier) {
       state.lastTier = tier; // compaction dropped usage -> re-arm the ladder
+      delete state.top; // pre-compaction consumers are no longer in context
+      delete state.topTs;
       saveState(sp, state);
     }
     pass();
@@ -262,7 +290,8 @@ try {
   const fresh = loadState(sp);
   const freshTier = typeof fresh.lastTier === "number" ? fresh.lastTier : 0;
   if (wantTier && freshTier >= tier) wantTier = false;
-  if (wantMerge && fresh.lastMergeTs && now - fresh.lastMergeTs <= COOLDOWN) wantMerge = false;
+  if (wantMerge && fresh.lastMergeTs && now - fresh.lastMergeTs <= COOLDOWN)
+    wantMerge = false;
   if (!wantTier && !wantMerge) pass();
 
   // Claim FIRST (atomic write), then do the expensive attribution + emit —
@@ -284,7 +313,16 @@ try {
       msg += " — /compact 권장";
       try {
         const top = await topConsumers(transcriptPath);
-        if (top.length > 0) msg += `. 상위 소비: ${top.join(" · ")}`;
+        if (top.length > 0) {
+          msg += `. 상위 소비: ${top.join(" · ")}`;
+          // Cache the leader for the statusline HUD (statusline.mjs) — it can't
+          // stream the transcript per render, so it reads this back. topConsumers
+          // above can take a while; RE-READ before this second write so a sibling
+          // that claimed a tier/merge in the meantime isn't clobbered by the
+          // stale `next` (which would drop its lastMergeTs -> duplicate nudge).
+          const cur = loadState(sp);
+          saveState(sp, { ...cur, top: top[0], topTs: now });
+        }
       } catch {
         // attribution is best-effort garnish; the alert still goes out
       }

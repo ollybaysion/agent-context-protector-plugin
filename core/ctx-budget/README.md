@@ -60,9 +60,65 @@ before extending any parsing, and always fail open.
 | `ACP_CTX_BUDGET_COMPACT_PCT` | `50` | From this % on, alerts add the /compact recommendation + attribution, and merge nudges arm. |
 | `ACP_CTX_BUDGET_STEP` | `10` | Tier width in percent. |
 
-State (last tier alerted, merge cooldown) lives per transcript at
-`os.tmpdir()/acp/ctx-budget/<hash>.json` — ephemeral by design; losing it only
-means one repeated alert.
+State (last tier alerted, merge cooldown, cached top consumer) lives per
+transcript at `os.tmpdir()/acp/ctx-budget/<hash>.json` — ephemeral by design;
+losing it only means one repeated alert.
+
+## Statusline HUD (always-visible)
+
+The tier alerts are push notifications at the moment you cross a line.
+`statusline.mjs` complements them with an always-on one-liner in the Claude
+Code status bar:
+
+```text
+ctx 62% · 5h 41% · 7d 27% · top Bash(npm test…) ~31k tok
+```
+
+- **`ctx`** — context-window %, straight from the statusline JSON's
+  pre-computed `context_window.used_percentage` (no transcript parsing on the
+  render path).
+- **`5h` / `7d`** — plan-quota usage from `rate_limits.five_hour` /
+  `rate_limits.seven_day`. These reflect your subscription's rolling limits,
+  independent of context.
+- **`top`** — the leading context consumer, read back from the ctx-budget
+  state file (populated once an attribution alert fires, i.e. ≥ 50% context;
+  cleared on compaction, dropped after 1h).
+
+Every segment is omitted when its field is absent, and any error prints a blank
+line — it never crashes your status bar.
+
+### Install
+
+It is **not** a hook. Add it to your **`settings.json`** `statusLine` (the
+plugin never edits your settings):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node /ABSOLUTE/PATH/TO/agent-context-protector-plugin/core/ctx-budget/statusline.mjs"
+  }
+}
+```
+
+Point at a stable path — your repo clone (updates on `git pull`) or a copy you
+keep somewhere fixed. The plugin **cache** path carries a version
+(`.../agent-context-protector/<version>/...`) and changes on every upgrade, so
+don't hardcode that one. The script is self-contained (node built-ins only), so
+copying it anywhere works.
+
+**Already have a status line?** Append this one's output to yours:
+
+```bash
+#!/usr/bin/env bash
+input=$(cat)
+line1=$(printf '%s' "$input" | your-existing-statusline)
+line2=$(printf '%s' "$input" | node /ABSOLUTE/PATH/.../core/ctx-budget/statusline.mjs)
+printf '%s | %s\n' "$line1" "$line2"
+```
+
+(Claude Code pipes the same JSON to whatever `statusLine.command` you set, so
+fan it out to both.)
 
 ## Honest limits
 
