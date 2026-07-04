@@ -455,7 +455,29 @@ const GATED = new Set([
   "wget",
   "ls",
 ]);
-const PROPOSE_TOKENS_PER_SESSION = 5000;
+// rule-candidate = a pattern worth gating in input-gate. The old trigger was
+// "tokens / total-transcripts > 5000", which mis-ranked by dividing a pattern's
+// spend across EVERY session including ones it never touched: it flagged broad,
+// low-per-call patterns (Read(*.md) ~1k tok/call — normal doc reads, gating
+// them just yields false positives) while missing few-call, high-per-call ones
+// (Read(*.output) ~10k tok/call, the real gate targets) because 7 sessions of
+// spend diluted over 30 fell under the bar. Trigger on PER-CALL cost instead —
+// that's what "a ranged read would bound this" actually keys on — with a
+// min-calls floor so a one-off heavy call doesn't propose a rule.
+// Only a positive finite override wins; anything else (unset, "", whitespace,
+// "0", negative, non-numeric) falls back to the default. Guarding >0 (not >=0)
+// matters: Number("") === 0, so a blank env value would otherwise set the
+// threshold to 0 and flood proposals with the very false positives this change
+// removes. 0 is never a meaningful value for either knob.
+const envNum = (v, dflt) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+};
+const PROPOSE_PER_CALL_TOKENS = envNum(
+  process.env.ACP_ANALYZE_PROPOSE_PER_CALL_TOKENS,
+  4000,
+);
+const PROPOSE_MIN_CALLS = envNum(process.env.ACP_ANALYZE_PROPOSE_MIN_CALLS, 3);
 
 const rows = [...patterns.entries()]
   .map(([label, e]) => ({
@@ -463,6 +485,7 @@ const rows = [...patterns.entries()]
     calls: e.calls,
     chars: e.chars,
     tokens: Math.round(e.chars / 4),
+    perCall: e.calls > 0 ? Math.round(e.chars / 4 / e.calls) : 0,
     preciseTokens: Math.round(e.preciseTokens),
     sessions: e.sessions.size,
     sharePct: totalChars ? Math.round((e.chars / totalChars) * 1000) / 10 : 0,
@@ -471,12 +494,15 @@ const rows = [...patterns.entries()]
 
 const proposals = [];
 for (const r of rows) {
-  const perSession = r.tokens / files.length;
-  if (perSession > PROPOSE_TOKENS_PER_SESSION && !GATED.has(r.label)) {
+  if (
+    r.perCall >= PROPOSE_PER_CALL_TOKENS &&
+    r.calls >= PROPOSE_MIN_CALLS &&
+    !GATED.has(r.label)
+  ) {
     proposals.push({
       kind: "rule-candidate",
       pattern: r.label,
-      why: `~${Math.round(perSession / 1000)}k tok/session across ${r.sessions} session(s), no input-gate rule`,
+      why: `~${Math.round(r.perCall / 1000)}k tok/call across ${r.calls} calls / ${r.sessions} session(s) — few calls burning a lot; a ranged read would bound it`,
     });
   }
 }
