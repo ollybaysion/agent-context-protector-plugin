@@ -54,9 +54,19 @@ what they caught, what they missed, and what rule to add next.
 2. **output-cap ledger** — cap markers per pattern (events, dropped tokens).
    Recorded here only, never shown live (by design).
 3. **deny ledger** — input-gate denies per rule head.
-4. **Proposals** — patterns above ~5k tok/session with no input-gate rule
-   ("rule-candidate") and patterns capped ≥2x ("gate-promotion"). The
-   measure → propose → add-rule → re-measure loop's propose step.
+4. **Proposals** — the propose step of the measure → propose → add-rule →
+   re-measure loop. Two kinds:
+   - **rule-candidate** — an ungated pattern whose **per-call** cost is high
+     (default ≥ 4k tok/call, `ACP_ANALYZE_PROPOSE_PER_CALL_TOKENS`) over at
+     least `ACP_ANALYZE_PROPOSE_MIN_CALLS` (default 3) calls. Per-call is the
+     right signal because "a ranged read would bound this" keys on how much a
+     *single* call dumps, not on aggregate volume: `Read(*.output)` at ~10k
+     tok/call is a real gate target, while `Read(*.md)` at ~1k tok/call over
+     many calls is normal doc reading that a gate would only false-positive
+     on. (The earlier tokens-per-session trigger did the opposite — it flagged
+     the broad low-per-call patterns and missed the concentrated ones.)
+   - **gate-promotion** — a pattern output-cap has capped ≥2x; a PreToolUse
+     bound would avoid the runs entirely.
 5. **`--precise`** — usage-delta attribution: growth between consecutive
    main-chain `usage` snapshots, minus the turn's own output tokens,
    distributed over the tool results in between (proportional to chars).
