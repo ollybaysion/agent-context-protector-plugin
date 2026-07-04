@@ -1,7 +1,7 @@
 {
   "name": "agent-context-protector",
   "description": "Claude Code hooks that shield the context window from bloat (huge tool outputs, whole-file reads, firehose commands) to cut token/context budget.",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "author": {
     "name": "ollybaysion",
     "email": "ollybaysion@gmail.com"
