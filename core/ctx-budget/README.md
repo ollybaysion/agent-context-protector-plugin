@@ -57,7 +57,8 @@ before extending any parsing, and always fail open.
 | Env var | Default | Meaning |
 | --- | --- | --- |
 | `ACP_CTX_BUDGET_WINDOW` | `200000` | Context window in tokens. **Set this to your model's real window** — percentages are only as truthful as this value. |
-| `ACP_CTX_BUDGET_COMPACT_PCT` | `50` | From this % on, alerts add the /compact recommendation + attribution, and merge nudges arm. |
+| `ACP_CTX_BUDGET_COMPACT_PCT` | `50` | From this % on, alerts add the /compact recommendation + attribution, and merge nudges arm. **Also the statusline advisory's 여유 → 권장 threshold** (shared so the HUD and the alerts agree). |
+| `ACP_CTX_BUDGET_URGENT_PCT` | `80` | Statusline advisory only: from this % on, the reason becomes `곧 자동 압축`. |
 | `ACP_CTX_BUDGET_STEP` | `10` | Tier width in percent. |
 
 State (last tier alerted, merge cooldown, cached top consumer) lives per
@@ -66,17 +67,31 @@ losing it only means one repeated alert.
 
 ## Statusline HUD (always-visible)
 
-The tier alerts are push notifications at the moment you cross a line.
-`statusline.mjs` complements them with an always-on one-liner in the Claude
-Code status bar:
+The tier alerts are push notifications at the moment you cross a line — they
+scroll away. `statusline.mjs` complements them with an always-on one-liner in
+the Claude Code status bar that also carries a **standing /compact advisory**,
+so the recommendation persists instead of vanishing with the message:
 
 ```text
-ctx 62% · 5h 41% · 7d 27% · top Bash(npm test…) ~31k tok
+ctx 62% · /compact 권장(절반 넘음) · 5h 41% · 7d 27% · top Bash(npm test…) ~31k tok
 ```
 
 - **`ctx`** — context-window %, straight from the statusline JSON's
   pre-computed `context_window.used_percentage` (no transcript parsing on the
   render path).
+- **advisory** — an always-on `/compact` recommendation keyed off that same
+  `ctx` %, with the reason in parentheses (the point of the segment is the
+  *why*). Three tiers, thresholds shared with the hook:
+  - `여유(컴팩트 불필요)` — below `ACP_CTX_BUDGET_COMPACT_PCT` (50%): compacting
+    a small context is a net loss, so it says so.
+  - `/compact 권장(절반 넘음)` — from 50% on.
+  - `/compact 권장(곧 자동 압축)` — from `ACP_CTX_BUDGET_URGENT_PCT` (80%),
+    near where Claude Code auto-compacts.
+
+  Shown only when `ctx` % is present (older Claude Code without the field →
+  segment omitted, like the others). Semantic-boundary advisories
+  (`/compact 적기(PR 생성 직후)` etc.) are a planned addition — for now the hook
+  still surfaces those as one-shot systemMessages.
 - **`5h` / `7d`** — plan-quota usage from `rate_limits.five_hour` /
   `rate_limits.seven_day`. These reflect your subscription's rolling limits,
   independent of context.
