@@ -4,15 +4,26 @@
 //
 //   node core/analyze/analyze.mjs [--project <dir-name>] [--since <ISO>]
 //                                 [--top N] [--json out.json] [--precise]
+//                                 [--plugin-report]
 //
-// Reports (all read-only over ~/.claude/projects/*/*.jsonl):
+// The DEFAULT report reads only what Claude Code itself writes, so it works
+// on machines where this plugin's hooks were never installed (see also the
+// npx path via the root package.json):
 //   0. billed usage totals + $ cost estimate (per-model price table, by
 //      day / session / model — API list rates; reference-only on Max plans)
 //   1. per-pattern cumulative spend (calls, chars, ~tokens, share, sessions)
-//   2. cap/deny ledger — output-cap markers and input-gate denies per pattern
-//   3. rule proposals — heavy ungated patterns and repeatedly-capped patterns
-//   4. --precise: usage-delta token attribution (billed-token based) and its
+//   2. rule proposals — heavy ungated patterns (rule-candidate)
+//   3. --precise: usage-delta token attribution (billed-token based) and its
 //      deviation from the chars/4 estimate
+//
+// --plugin-report adds the plugin-effect sections (they read markers that
+// only exist when the hooks were active in the period):
+//   4. cap/deny ledger — output-cap markers and input-gate denies, with $
+//      savings per cap event priced against the session's MEASURED remaining
+//      turns (post-hoc: we can count how many main-chain turns actually
+//      followed each event, so the re-read multiplier is not a guess)
+//   5. inefficiency diagnostics — repeatedly-capped patterns (gate-promotion),
+//      deny→retry tracking, and gated-family activity summary
 //
 // Totals are cumulative HISTORY spend (no compact-boundary reset — that
 // matters for live-context attribution, not for "what has been costing us").
@@ -39,6 +50,7 @@ const opt = {
   json: null,
   precise: false,
   full: false,
+  pluginReport: false,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -51,9 +63,11 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--precise") opt.precise = true;
   else if (a === "--full")
     opt.full = true; // every pattern row, no top-N cut
+  else if (a === "--plugin-report")
+    opt.pluginReport = true; // plugin-effect sections (cap/deny ledgers, savings, inefficiencies)
   else if (a === "--help" || a === "-h") {
     console.log(
-      "usage: analyze.mjs [--project <dir-name>] [--since <ISO>] [--top N | --full] [--json out.json] [--precise]",
+      "usage: analyze.mjs [--project <dir-name>] [--since <ISO>] [--top N | --full] [--json out.json] [--precise] [--plugin-report]",
     );
     process.exit(0);
   } else {
@@ -104,6 +118,13 @@ const caps = new Map();
 // rule head -> count
 const denies = new Map();
 let totalChars = 0;
+// Per-event records for --plugin-report savings/inefficiency math. Main-chain
+// only: the remaining-turn multiplier below counts main-chain turns, so mixing
+// in sidechain events would price them against the wrong context lifetime.
+// (The aggregate ledgers above still include sidechain traffic, unchanged.)
+const capEvents = []; // {file, label, droppedChars, turnsAt, model}
+const denyEvents = []; // {file, label, ruleKey, turnsAt, retried}
+const finalTurns = new Map(); // file -> final main-chain turn count
 
 const pat = (label) => {
   let e = patterns.get(label);
@@ -240,6 +261,8 @@ function resultText(block) {
 async function scanFile(file) {
   const pending = new Map(); // tool_use_id -> {label, inputChars, sidechain}
   const seenMsgIds = new Set(); // dedupe split entries of one API response
+  let lastMainModel = null; // model of the latest main-chain usage entry
+  const awaitingRetry = new Map(); // label -> deny events awaiting a same-family retry
   const session = {
     id: file
       .split("/")
@@ -296,6 +319,7 @@ async function scanFile(file) {
               : "(unknown)";
           const price = priceFor(model);
           const cost = usageCost(u, price);
+          if (!sidechain) lastMainModel = model;
           addUsage(
             sidechain ? usageTotals.subagent : usageTotals.main,
             u,
@@ -372,6 +396,19 @@ async function scanFile(file) {
             if (m) {
               const key = m[0].replace(/\d+/g, "N");
               denies.set(key, (denies.get(key) ?? 0) + 1);
+              if (!sc) {
+                const ev = {
+                  file,
+                  label,
+                  ruleKey: key,
+                  turnsAt: session.main.turns,
+                  retried: false,
+                };
+                denyEvents.push(ev);
+                let w = awaitingRetry.get(label);
+                if (!w) awaitingRetry.set(label, (w = []));
+                w.push(ev);
+              }
             }
             continue; // denied call cost ~nothing; don't count as spend
           }
@@ -381,6 +418,13 @@ async function scanFile(file) {
           e.chars += chars;
           e.sessions.add(file);
           totalChars += chars;
+          // A later successful call of the same family means the deny's
+          // suggested bounded alternative (or a narrower read) was taken —
+          // the guidance worked rather than the task being abandoned.
+          if (!sc && awaitingRetry.has(label)) {
+            for (const ev of awaitingRetry.get(label)) ev.retried = true;
+            awaitingRetry.delete(label);
+          }
           CAP_MARKER.lastIndex = 0;
           let cm;
           while ((cm = CAP_MARKER.exec(text)) !== null) {
@@ -388,6 +432,14 @@ async function scanFile(file) {
             if (!c) caps.set(label, (c = { events: 0, droppedChars: 0 }));
             c.events++;
             c.droppedChars += Number(cm[1]);
+            if (!sc)
+              capEvents.push({
+                file,
+                label,
+                droppedChars: Number(cm[1]),
+                turnsAt: session.main.turns,
+                model: lastMainModel,
+              });
           }
           if (opt.precise && !sc) events.push({ kind: "result", label, chars });
         }
@@ -429,6 +481,7 @@ async function scanFile(file) {
 
   if (session.main.turns > 0 || session.subagent.turns > 0)
     bySession.push(session);
+  finalTurns.set(file, session.main.turns);
 }
 
 for (const f of files) {
@@ -440,7 +493,12 @@ for (const f of files) {
 }
 
 // ---- rule proposals -----------------------------------------------------------
-// Pattern families input-gate already covers (deny or measure).
+// Pattern families input-gate already covers (deny or measure). KEEP IN SYNC
+// with core/input-gate/input-gate.mjs — Bash families come from its
+// FOLLOW/VOLUME rules; Read families from LOG_ARTIFACT_READ / ARTIFACT_READ
+// (extension-level only: package-lock.json and *.min.js normalize to
+// Read(*.json) / Read(*.js), which we deliberately do NOT list — gating those
+// labels would suppress proposals for normal json/js reads too).
 const GATED = new Set([
   "tail",
   "tree",
@@ -454,6 +512,13 @@ const GATED = new Set([
   "curl",
   "wget",
   "ls",
+  "Read(*.output)",
+  "Read(*.log)",
+  "Read(*.trace)",
+  "Read(*.dump)",
+  "Read(*.ndjson)",
+  "Read(*.map)",
+  "Read(*.lock)",
 ]);
 // rule-candidate = a pattern worth gating in input-gate. The old trigger was
 // "tokens / total-transcripts > 5000", which mis-ranked by dividing a pattern's
@@ -506,15 +571,70 @@ for (const r of rows) {
     });
   }
 }
+// gate-promotion keys on cap events (plugin data), so it lives in the plugin
+// report — printed there, but always present in --json (handoff shape).
+const gatePromotions = [];
 for (const [label, c] of caps) {
   if (c.events >= 2) {
-    proposals.push({
+    gatePromotions.push({
       kind: "gate-promotion",
       pattern: label,
       why: `output-cap fired ${c.events}x (~${Math.round(c.droppedChars / 4000)}k tok dropped) — a PreToolUse bound would avoid the runs entirely`,
     });
   }
 }
+
+// ---- plugin-effect math (savings, deny retries, gated-family activity) ---------
+// Savings model per cap event: the dropped tokens would have been written to
+// cache once (CC traffic is 1h TTL -> 2x base input) and then re-read at 0.1x
+// on EVERY later turn of that session. Post-hoc we know the actual remaining
+// main-chain turn count, so the multiplier is measured, not assumed. Priced
+// by the model of the nearest preceding main-chain usage entry; events with
+// no priceable model are counted but excluded from $ (never guessed).
+// Denies have no recorded size (blocked before execution), so they are
+// reported as counts only — deliberately not converted to $.
+const capSavings = new Map(); // label -> {events, droppedTok, saved, unpriced}
+let capSavedTotal = 0;
+for (const ev of capEvents) {
+  const remaining = Math.max(
+    0,
+    (finalTurns.get(ev.file) ?? ev.turnsAt) - ev.turnsAt,
+  );
+  const droppedTok = ev.droppedChars / 4;
+  const p = priceFor(ev.model);
+  let s = capSavings.get(ev.label);
+  if (!s)
+    capSavings.set(
+      ev.label,
+      (s = { events: 0, droppedTok: 0, saved: 0, unpriced: 0 }),
+    );
+  s.events++;
+  s.droppedTok += droppedTok;
+  if (p) {
+    const usd = (droppedTok * (p.input * 2 + p.input * 0.1 * remaining)) / 1e6;
+    s.saved += usd;
+    capSavedTotal += usd;
+  } else {
+    s.unpriced++;
+  }
+}
+const denyRetries = {
+  total: denyEvents.length,
+  retried: denyEvents.filter((e) => e.retried).length,
+  abandoned: denyEvents.filter((e) => !e.retried),
+};
+// Activity per gated family: traffic without any intervention usually means
+// calls stayed under the thresholds (the gate working silently) — but a
+// consistently quiet rule with heavy traffic is worth a threshold check.
+const ruleActivity = [...GATED]
+  .map((fam) => ({
+    family: fam,
+    calls: patterns.get(fam)?.calls ?? 0,
+    caps: caps.get(fam)?.events ?? 0,
+    denies: denyEvents.filter((e) => e.label === fam).length,
+  }))
+  .filter((a) => a.calls > 0 || a.caps > 0 || a.denies > 0);
+const pluginDataPresent = capEvents.length > 0 || denyEvents.length > 0;
 
 // ---- output ---------------------------------------------------------------------
 const fmtK = (n) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
@@ -644,23 +764,72 @@ for (const r of opt.full ? rows : rows.slice(0, opt.top)) {
   );
 }
 
-if (caps.size > 0) {
-  console.log(`\n## output-cap ledger`);
-  for (const [label, c] of [...caps.entries()].sort(
-    (a, b) => b[1].droppedChars - a[1].droppedChars,
-  ))
-    console.log(
-      `${pad(label, 28)} capped ${c.events}x, dropped ~${fmtK(Math.round(c.droppedChars / 4))} tok`,
-    );
-}
-if (denies.size > 0) {
-  console.log(`\n## deny ledger`);
-  for (const [rule, n] of [...denies.entries()].sort((a, b) => b[1] - a[1]))
-    console.log(`${pad(String(n) + "x", 6)}${rule}`);
-}
 if (proposals.length > 0) {
   console.log(`\n## proposals`);
   for (const p of proposals) console.log(`[${p.kind}] ${p.pattern} — ${p.why}`);
+}
+
+// ---- plugin report (opt-in): hook-effect sections ------------------------------
+if (opt.pluginReport) {
+  if (!pluginDataPresent) {
+    console.log(
+      `\n## plugin report\n(no output-cap/deny markers in this period — agent-context-protector hooks appear inactive; plugin sections skipped)`,
+    );
+  } else {
+    if (caps.size > 0) {
+      console.log(
+        `\n## output-cap ledger (saved $ = dropped tok x (1h write 2x + read 0.1x x measured remaining turns), main-chain)`,
+      );
+      for (const [label, c] of [...caps.entries()].sort(
+        (a, b) => b[1].droppedChars - a[1].droppedChars,
+      )) {
+        const s = capSavings.get(label);
+        const saved = s
+          ? s.unpriced > 0 && s.saved === 0
+            ? " → saved: (unpriced model)"
+            : ` → est saved ${fmtUSD(s.saved)}`
+          : ""; // sidechain-only pattern: ledger row without main-chain savings
+        console.log(
+          `${pad(label, 28)} capped ${c.events}x, dropped ~${fmtK(Math.round(c.droppedChars / 4))} tok${saved}`,
+        );
+      }
+      if (capSavedTotal > 0)
+        console.log(`output-cap subtotal: est saved ${fmtUSD(capSavedTotal)}`);
+    }
+    if (denies.size > 0) {
+      console.log(
+        `\n## deny ledger (input-gate; $ not quantified — blocked before execution, size unrecorded)`,
+      );
+      for (const [rule, n] of [...denies.entries()].sort((a, b) => b[1] - a[1]))
+        console.log(`${pad(String(n) + "x", 6)}${rule}`);
+      if (denyRetries.total > 0)
+        console.log(
+          `deny→retry: ${denyRetries.retried}/${denyRetries.total} denies followed by a same-family retry (retry = the suggested bounded alternative was taken)`,
+        );
+    }
+    const hasIneff =
+      gatePromotions.length > 0 ||
+      denyRetries.abandoned.length > 0 ||
+      ruleActivity.some((a) => a.calls > 0 && a.caps === 0 && a.denies === 0);
+    if (hasIneff) {
+      console.log(`\n## plugin inefficiencies`);
+      for (const p of gatePromotions)
+        console.log(`[${p.kind}] ${p.pattern} — ${p.why}`);
+      for (const ev of denyRetries.abandoned)
+        console.log(
+          `[no-retry] ${ev.label} — denied (${ev.ruleKey.trim()}) and never retried in that session; the rule message may not offer a usable alternative, or the task was dropped`,
+        );
+      const quiet = ruleActivity.filter(
+        (a) => a.calls > 0 && a.caps === 0 && a.denies === 0,
+      );
+      if (quiet.length > 0)
+        console.log(
+          `[quiet-rules] traffic but no intervention this period (bounded usage, or thresholds never reached): ${quiet
+            .map((a) => `${a.family} (${a.calls} calls)`)
+            .join(", ")}`,
+        );
+    }
+  }
 }
 if (opt.precise) {
   const est = rows.reduce((s, r) => s + r.tokens, 0);
@@ -691,7 +860,20 @@ if (opt.json) {
           patterns: rows,
           caps: Object.fromEntries(caps),
           denies: Object.fromEntries(denies),
-          proposals,
+          // both kinds, as before the report split (dashboard handoff shape)
+          proposals: [...proposals, ...gatePromotions],
+          // plugin-effect data is always computed (cheap) and always in the
+          // JSON, regardless of --plugin-report — only console output is gated
+          pluginReport: {
+            capSavings: Object.fromEntries(capSavings),
+            capSavedTotal,
+            denyRetries: {
+              total: denyRetries.total,
+              retried: denyRetries.retried,
+              abandoned: denyRetries.abandoned,
+            },
+            ruleActivity,
+          },
         },
         null,
         2,
