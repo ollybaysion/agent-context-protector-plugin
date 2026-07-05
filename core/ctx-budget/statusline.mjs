@@ -36,6 +36,27 @@ function statePath(transcriptPath) {
 // per-session (per-transcript) file that ctx-budget clears on compaction.
 const TOP_MAX_AGE_MS = 60 * 60 * 1000;
 
+// Compaction advisory thresholds. Share ACP_CTX_BUDGET_COMPACT_PCT with the
+// ctx-budget hook so the always-on HUD and the tier alerts agree on when
+// /compact starts being worth it; URGENT_PCT is HUD-only (default wording
+// "곧 자동 압축" assumes Claude Code auto-compacts near the top of the window).
+function positiveEnv(name, dflt) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+const COMPACT_PCT = positiveEnv("ACP_CTX_BUDGET_COMPACT_PCT", 50);
+const URGENT_PCT = positiveEnv("ACP_CTX_BUDGET_URGENT_PCT", 80);
+
+// Always-on /compact recommendation keyed off the live context %. The reason in
+// parentheses is the whole point of this segment — it says WHY now (or why not),
+// so the advisory persists in the bar instead of scrolling away like the hook's
+// one-shot systemMessage. Wording ("절반 넘음") assumes the default 50% gate.
+function recommend(pct) {
+  if (pct >= URGENT_PCT) return "/compact 권장(곧 자동 압축)";
+  if (pct >= COMPACT_PCT) return "/compact 권장(절반 넘음)";
+  return "여유(컴팩트 불필요)";
+}
+
 function pctInt(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0
     ? Math.round(v)
@@ -67,7 +88,10 @@ try {
 
   const segments = [];
   const ctx = pctInt(input?.context_window?.used_percentage);
-  if (ctx !== null) segments.push(`ctx ${ctx}%`);
+  if (ctx !== null) {
+    segments.push(`ctx ${ctx}%`);
+    segments.push(recommend(ctx)); // always-on advisory whenever ctx% is known
+  }
 
   const h5 = pctInt(input?.rate_limits?.five_hour?.used_percentage);
   if (h5 !== null) segments.push(`5h ${h5}%`);
