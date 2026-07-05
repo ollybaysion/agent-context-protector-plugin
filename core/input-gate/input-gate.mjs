@@ -32,6 +32,7 @@ import {
   pass,
   failOpen,
 } from "../../lib/hook-io.mjs";
+import { LOG_ARTIFACT_EXTS } from "../../lib/gate-rules.mjs";
 
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
@@ -191,12 +192,13 @@ const VISUAL_READ = /\.(?:png|jpe?g|gif|webp|bmp|ico|pdf)$/i;
 const ARTIFACT_READ =
   /(?:\.min\.(?:js|mjs|css)|\.(?:js|css)\.map|\.bundle\.js|(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|composer\.lock|Gemfile\.lock))$/i;
 
-// Build/run output logs: dump-once, low-signal-per-token, best queried with rg.
-// `.output` is mining-proven (~10k tok/call); the rest are the same class and
-// absent in the observed corpus, so adding them carries no false-positive risk.
-// Deliberately excludes .md/.mjs/.js/.json/.txt — all normal reads (<2.5k
-// tok/call in the mine) that a gate would only false-positive on.
-const LOG_ARTIFACT_READ = /\.(?:output|log|trace|dump|ndjson)$/i;
+// Build/run output logs: dump-once, low-signal-per-token, best queried with
+// rg. The extension list lives in lib/gate-rules.mjs (single source shared
+// with analyze's proposal exclusions — edit it there, both sides follow).
+const LOG_ARTIFACT_READ = new RegExp(
+  `\\.(?:${LOG_ARTIFACT_EXTS.join("|")})$`,
+  "i",
+);
 
 function gateRead(input) {
   const p = input?.tool_input?.file_path;

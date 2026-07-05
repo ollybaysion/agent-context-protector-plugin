@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { toolPattern } from "../../lib/patterns.mjs";
+import { gatedFamilies } from "../../lib/gate-rules.mjs";
 
 // ---- args -------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -493,33 +494,11 @@ for (const f of files) {
 }
 
 // ---- rule proposals -----------------------------------------------------------
-// Pattern families input-gate already covers (deny or measure). KEEP IN SYNC
-// with core/input-gate/input-gate.mjs — Bash families come from its
-// FOLLOW/VOLUME rules; Read families from LOG_ARTIFACT_READ / ARTIFACT_READ
-// (extension-level only: package-lock.json and *.min.js normalize to
-// Read(*.json) / Read(*.js), which we deliberately do NOT list — gating those
-// labels would suppress proposals for normal json/js reads too).
-const GATED = new Set([
-  "tail",
-  "tree",
-  "du",
-  "journalctl",
-  "docker logs",
-  "kubectl logs",
-  "pm2 logs",
-  "git log",
-  "git diff",
-  "curl",
-  "wget",
-  "ls",
-  "Read(*.output)",
-  "Read(*.log)",
-  "Read(*.trace)",
-  "Read(*.dump)",
-  "Read(*.ndjson)",
-  "Read(*.map)",
-  "Read(*.lock)",
-]);
+// Pattern families input-gate already covers, from the shared single source
+// (lib/gate-rules.mjs). input-gate builds its Read regex from the same file,
+// so a newly gated extension drops out of proposals automatically — no
+// manual sync, no ghost re-proposals of already-gated patterns.
+const GATED = gatedFamilies();
 // rule-candidate = a pattern worth gating in input-gate. The old trigger was
 // "tokens / total-transcripts > 5000", which mis-ranked by dividing a pattern's
 // spend across EVERY session including ones it never touched: it flagged broad,
