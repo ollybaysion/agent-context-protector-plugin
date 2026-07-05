@@ -8,7 +8,8 @@
 //
 //   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중").
 //   - From 50% on, the alert adds a /compact recommendation plus the top
-//     context consumers since the last compaction boundary (attribution).
+//     context consumers since the last compaction boundary, grouped by pattern
+//     family with cumulative tokens + call counts (attribution.mjs).
 //   - A successful-looking `gh pr merge` at >=50% context gets its own nudge:
 //     a merge is a clean semantic boundary, so it is the best /compact moment.
 //   - After compaction (usage drops below the alerted tier) tiers reset, so
@@ -34,9 +35,7 @@ import {
   writeFileSync,
   renameSync,
   mkdirSync,
-  createReadStream,
 } from "node:fs";
-import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +45,7 @@ import {
   pass,
   failOpen,
 } from "../../lib/hook-io.mjs";
+import { topConsumers, fmtK } from "./attribution.mjs";
 
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
@@ -55,8 +55,6 @@ function positiveEnv(name, dflt) {
 const WINDOW = positiveEnv("ACP_CTX_BUDGET_WINDOW", 200000);
 const COMPACT_PCT = positiveEnv("ACP_CTX_BUDGET_COMPACT_PCT", 50);
 const STEP = positiveEnv("ACP_CTX_BUDGET_STEP", 10);
-
-const fmtK = (n) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 
 // ---- state (per transcript = per context) ----------------------------------
 function statePath(transcriptPath) {
@@ -121,76 +119,6 @@ function currentContextTokens(transcriptPath) {
     }
   }
   return null;
-}
-
-// ---- attribution: top context consumers since the last compact boundary ----
-// Labels are model-controlled (command text, file paths) and flow into a
-// user-facing systemMessage AND the statusline HUD, so collapse every run of
-// whitespace-or-control into one space — a plain \\s+ collapse leaves ESC and
-// other C0 control chars intact, a terminal-injection vector into the HUD.
-const cleanLabel = (s) => s.replace(/[\s\x00-\x1f\x7f]+/g, " ").trim();
-function toolLabel(name, input) {
-  const n = cleanLabel(String(name ?? ""));
-  if (name === "Bash" && typeof input?.command === "string") {
-    const c = cleanLabel(input.command);
-    return `Bash(${c.length > 28 ? c.slice(0, 28) + "…" : c})`;
-  }
-  const p = input?.file_path;
-  if (typeof p === "string")
-    return `${n}(${cleanLabel(p.split("/").pop() ?? "")})`;
-  return n;
-}
-
-async function topConsumers(transcriptPath, topN = 3) {
-  const pending = new Map(); // tool_use_id -> {label, inputChars}
-  let sums = new Map(); // label -> chars
-  await new Promise((resolve, reject) => {
-    const rl = createInterface({
-      input: createReadStream(transcriptPath),
-      crlfDelay: Infinity,
-    });
-    rl.on("line", (line) => {
-      let j;
-      try {
-        j = JSON.parse(line);
-      } catch {
-        return;
-      }
-      if (j?.type === "system" && j?.subtype === "compact_boundary") {
-        sums = new Map(); // content before the boundary is no longer in context
-        pending.clear();
-        return;
-      }
-      if (j?.isSidechain === true) return;
-      const content = j?.message?.content;
-      if (!Array.isArray(content)) return;
-      for (const block of content) {
-        if (block?.type === "tool_use") {
-          const inputChars = JSON.stringify(block.input ?? {}).length;
-          pending.set(block.id, {
-            label: toolLabel(block.name, block.input),
-            inputChars,
-          });
-        }
-        if (block?.type === "tool_result" && pending.has(block.tool_use_id)) {
-          const { label, inputChars } = pending.get(block.tool_use_id);
-          pending.delete(block.tool_use_id);
-          let chars = inputChars;
-          if (typeof block.content === "string") chars += block.content.length;
-          else if (Array.isArray(block.content))
-            for (const c of block.content)
-              if (c?.type === "text") chars += (c.text ?? "").length;
-          sums.set(label, (sums.get(label) ?? 0) + chars);
-        }
-      }
-    });
-    rl.on("close", resolve);
-    rl.on("error", reject);
-  });
-  return [...sums.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, topN)
-    .map(([label, chars]) => `${label} ~${fmtK(Math.round(chars / 4))} tok`);
 }
 
 // ---- main -------------------------------------------------------------------
