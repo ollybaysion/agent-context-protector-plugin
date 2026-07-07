@@ -8,13 +8,16 @@
 //   context_window.used_percentage        -> ctx %
 //   rate_limits.five_hour.used_percentage -> 5h session-quota %
 //   rate_limits.seven_day.used_percentage -> 7d weekly-quota %
-// The one extra bit is the top context consumers, which Claude Code does NOT
-// provide: ctx-budget caches them (the ACP_CTX_BUDGET_TOP_N pattern families,
-// default 3) into its per-transcript state file on every 10% tier crossing (so
-// they show below the /compact threshold too), and we read them back here by
-// reproducing the same state path from transcript_path. The consumers segment
-// is rendered LAST, so if the bar is too narrow and truncates, the ctx
-// %/advisory ahead of it survive.
+// The extra bits Claude Code does NOT provide come from ctx-budget's per-
+// transcript state file (written on tier crossings + a throttled refresh, read
+// back here by reproducing the same state path from transcript_path):
+//   - top consumers, each as a per-turn $ "rent" (what it costs to keep that
+//     pattern family in context every turn) — or a bare token estimate when the
+//     model is unpriced. Rendered LAST so a narrow bar truncates it, not the ctx
+//     %/advisory ahead of it.
+//   - turnCost / compactCost: the whole-context per-turn re-read cost and the
+//     one-time cost of compacting now. The compact cost rides inline with the
+//     advisory ("/compact 고려 ($0.4)"); the turn cost is its own segment.
 //
 // Fail-open is absolute: any parse/read error prints an empty line and exits 0.
 // A blank status line is the safe degradation — never crash the user's bar.
@@ -23,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { fmtUsd } from "../../lib/pricing.mjs";
 
 // CONTRACT: must match statePath() in ctx-budget.mjs exactly, or the HUD reads
 // the wrong file and silently shows no top consumer.
@@ -39,25 +43,36 @@ function statePath(transcriptPath) {
 // per-session (per-transcript) file that ctx-budget clears on compaction.
 const TOP_MAX_AGE_MS = 60 * 60 * 1000;
 
-// Compaction advisory thresholds. Share ACP_CTX_BUDGET_COMPACT_PCT with the
-// ctx-budget hook so the always-on HUD and the tier alerts agree on when
-// /compact starts being worth it; URGENT_PCT is HUD-only (default wording
-// "곧 자동 압축" assumes Claude Code auto-compacts near the top of the window).
+// Size-based /compact advisory thresholds (ctx %). Calibrated on 41 real 1M-
+// window sessions: peaks are bottom-heavy (p50≈16%, p75≈36%, max≈66%), so the
+// old 50% gate fired in only ~17% of them. These cover ~top-75%: ADVISE≈8% first
+// nudges (~70% of sessions reach it), RECOMMEND≈35% is a genuinely big session
+// (~top quartile), URGENT≈70% is near where Claude Code auto-compacts. Wording is
+// size-based and non-mandatory ("고려"→"권장") — the compact $ rides alongside.
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n > 0 ? n : dflt;
 }
-const COMPACT_PCT = positiveEnv("ACP_CTX_BUDGET_COMPACT_PCT", 50);
-const URGENT_PCT = positiveEnv("ACP_CTX_BUDGET_URGENT_PCT", 80);
+const ADVISE_PCT = positiveEnv("ACP_CTX_BUDGET_ADVISE_PCT", 8);
+const RECOMMEND_PCT = positiveEnv("ACP_CTX_BUDGET_RECOMMEND_PCT", 35);
+const URGENT_PCT = positiveEnv("ACP_CTX_BUDGET_URGENT_PCT", 70);
 
-// Always-on /compact recommendation keyed off the live context %. The reason in
-// parentheses is the whole point of this segment — it says WHY now (or why not),
-// so the advisory persists in the bar instead of scrolling away like the hook's
-// one-shot systemMessage. Wording ("절반 넘음") assumes the default 50% gate.
-function recommend(pct) {
-  if (pct >= URGENT_PCT) return "/compact 권장(곧 자동 압축)";
-  if (pct >= COMPACT_PCT) return "/compact 권장(절반 넘음)";
-  return "여유(컴팩트 불필요)";
+// The cached compactCost is nudge.mjs costSegment's estUsd — already rounded to
+// its display rule (1 decimal, 2 below $0.095). Re-apply the same rule here so
+// the HUD and the boundary nudge quote the SAME price for the same action
+// (fmtUsd's finer grid would render $0.2 as $0.20 and diverge from the nudge).
+const fmtCompactUsd = (n) => `$${n < 0.095 ? n.toFixed(2) : n.toFixed(1)}`;
+
+// Always-on advisory keyed off the LIVE context %. The one-time compact cost (if
+// cached & priced) rides in parens — "spend this once" — paired across the bar
+// with each consumer's per-turn rent ("keep paying this"). Below ADVISE_PCT the
+// session is small enough that compaction isn't worth mentioning.
+function recommend(pct, compactCost) {
+  const c = compactCost != null ? ` (${fmtCompactUsd(compactCost)})` : "";
+  if (pct >= URGENT_PCT) return `/compact 권장 · 곧 자동압축${c}`;
+  if (pct >= RECOMMEND_PCT) return `/compact 권장${c}`;
+  if (pct >= ADVISE_PCT) return `/compact 고려${c}`;
+  return "여유";
 }
 
 function pctInt(v) {
@@ -66,23 +81,37 @@ function pctInt(v) {
     : null;
 }
 
-function readTop(transcriptPath) {
-  if (typeof transcriptPath !== "string" || transcriptPath === "") return null;
+const EMPTY_HUD = { topStr: null, turnCost: null, compactCost: null };
+
+// Read ctx-budget's cached HUD state: the top-consumer string plus the whole-
+// context turn/compact costs. All three are gated on ONE freshness stamp
+// (topTs) because ctx-budget writes them together — a missing/stale stamp means
+// stale or foreign state, so we trust none of it (the HUD self-heals).
+function readHud(transcriptPath) {
+  if (typeof transcriptPath !== "string" || transcriptPath === "")
+    return EMPTY_HUD;
   try {
     const s = JSON.parse(readFileSync(statePath(transcriptPath), "utf8"));
-    if (!s) return null;
-    if (typeof s.topTs === "number" && Date.now() - s.topTs > TOP_MAX_AGE_MS)
-      return null;
+    if (!s) return EMPTY_HUD;
+    if (typeof s.topTs !== "number" || Date.now() - s.topTs > TOP_MAX_AGE_MS)
+      return EMPTY_HUD;
     // `tops` (full list) is what the HUD renders; fall back to the legacy `top`
     // leader for state written by a pre-top3 release still live in this session.
+    let topStr = null;
     if (Array.isArray(s.tops)) {
       const items = s.tops.filter((x) => typeof x === "string" && x !== "");
-      if (items.length > 0) return items.join(" · ");
+      if (items.length > 0) topStr = items.join(" · ");
     }
-    if (typeof s.top === "string" && s.top !== "") return s.top;
-    return null;
+    if (!topStr && typeof s.top === "string" && s.top !== "") topStr = s.top;
+    const numOrNull = (v) =>
+      typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+    return {
+      topStr,
+      turnCost: numOrNull(s.turnCost),
+      compactCost: numOrNull(s.compactCost),
+    };
   } catch {
-    return null; // missing/corrupt state -> no top segment
+    return EMPTY_HUD; // missing/corrupt state -> no HUD extras
   }
 }
 
@@ -96,12 +125,18 @@ try {
   const raw = await readStdin();
   const input = JSON.parse(raw);
 
+  const hud = readHud(input?.transcript_path);
   const segments = [];
   const ctx = pctInt(input?.context_window?.used_percentage);
   if (ctx !== null) {
     segments.push(`ctx ${ctx}%`);
-    segments.push(recommend(ctx)); // always-on advisory whenever ctx% is known
+    // always-on advisory (+ inline one-time compact $ when cached) keyed off ctx%
+    segments.push(recommend(ctx, hud.compactCost));
   }
+  // whole-context per-turn re-read cost: what each message currently bills just
+  // to re-send the context. Right after the advisory, both being "should I
+  // compact?" signals.
+  if (hud.turnCost != null) segments.push(`턴 ~${fmtUsd(hud.turnCost)}`);
 
   const h5 = pctInt(input?.rate_limits?.five_hour?.used_percentage);
   if (h5 !== null) segments.push(`5h ${h5}%`);
@@ -109,8 +144,7 @@ try {
   const d7 = pctInt(input?.rate_limits?.seven_day?.used_percentage);
   if (d7 !== null) segments.push(`7d ${d7}%`);
 
-  const top = readTop(input?.transcript_path);
-  if (top) segments.push(`top ${top}`);
+  if (hud.topStr) segments.push(`top ${hud.topStr}`);
 
   // Nothing to show (e.g. an older Claude Code without these fields) -> stay
   // silent rather than print a bare prefix. Defensive control-char strip at the

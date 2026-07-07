@@ -56,9 +56,15 @@ test("folds invocations into pattern families with cumulative tokens + counts", 
 
   assert.equal(top.length, 3);
   // Sorted by cumulative chars: npm test (4×900) > git diff (2×900) > Read (3×200).
-  assert.match(top[0], /^npm test ~[\d.]+k? tok \(4회\)$/);
-  assert.match(top[1], /^git diff ~[\d.]+k? tok \(2회\)$/);
-  assert.match(top[2], /^Read\(\*\.md\) ~[\d.]+k? tok \(3회\)$/);
+  assert.deepEqual(
+    top.map((t) => [t.label, t.calls]),
+    [
+      ["npm test", 4],
+      ["git diff", 2],
+      ["Read(*.md)", 3],
+    ],
+  );
+  assert.ok(top[0].tokens > top[1].tokens && top[1].tokens > top[2].tokens);
 });
 
 test("respects topN", async () => {
@@ -69,8 +75,8 @@ test("respects topN", async () => {
   ];
   const top = await topConsumers(writeTranscript(lines), 2);
   assert.equal(top.length, 2);
-  assert.ok(top[0].startsWith("npm test"));
-  assert.ok(top[1].startsWith("git diff"));
+  assert.equal(top[0].label, "npm test");
+  assert.equal(top[1].label, "git diff");
 });
 
 test("resets at a compaction boundary — pre-boundary spend is gone", async () => {
@@ -81,7 +87,7 @@ test("resets at a compaction boundary — pre-boundary spend is gone", async () 
   ];
   const top = await topConsumers(writeTranscript(lines));
   assert.equal(top.length, 1);
-  assert.ok(top[0].startsWith("git diff"));
+  assert.equal(top[0].label, "git diff");
 });
 
 test("skips sidechain (subagent) entries", async () => {
@@ -92,19 +98,22 @@ test("skips sidechain (subagent) entries", async () => {
   ];
   const top = await topConsumers(writeTranscript(lines));
   assert.equal(top.length, 1);
-  assert.ok(top[0].startsWith("git diff"));
+  assert.equal(top[0].label, "git diff");
 });
 
-test("token math and k-formatting are exact", async () => {
-  // input {} -> 2 chars; result 3998 -> total 4000 chars -> 1000 tok -> "1k".
+test("token math is exact", async () => {
+  // input {} -> 2 chars; result 3998 -> total 4000 chars -> 1000 tok.
   const lines = call("w1", "WebFetch", {}, 3998);
   const top = await topConsumers(writeTranscript(lines));
-  assert.deepEqual(top, ["WebFetch ~1k tok (1회)"]);
+  assert.deepEqual(top, [{ label: "WebFetch", tokens: 1000, calls: 1 }]);
 });
 
 test("control chars in a model-supplied label are sanitized", async () => {
   const lines = call("e1", "Bash", { command: "./ev\x1bil.sh --now" }, 40);
-  const [line] = await topConsumers(writeTranscript(lines));
-  assert.ok(!/[\x00-\x1f\x7f]/.test(line), "no raw control chars in HUD label");
-  assert.ok(line.startsWith("ev il.sh "));
+  const [item] = await topConsumers(writeTranscript(lines));
+  assert.ok(
+    !/[\x00-\x1f\x7f]/.test(item.label),
+    "no raw control chars in HUD label",
+  );
+  assert.ok(item.label.startsWith("ev il.sh"));
 });

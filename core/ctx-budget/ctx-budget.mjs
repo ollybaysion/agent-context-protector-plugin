@@ -7,10 +7,12 @@
 // simply don't apply and the tier ladder still debounces everything.
 //
 //   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중"). Each
-//     crossing also refreshes the attribution cache the always-on statusline
-//     HUD reads (top pattern families since the last compaction boundary, with
-//     cumulative tokens + call counts — attribution.mjs), so the HUD can show
-//     consumers below the /compact threshold too.
+//     crossing also refreshes the cache the always-on statusline HUD reads:
+//     top pattern families since the last compaction boundary (attribution.mjs),
+//     each priced as a per-turn re-read "rent", plus the whole-context per-turn
+//     cost and the one-time compact cost (same costSegment estimate the nudges
+//     print) — so the HUD shows what context is costing below the /compact
+//     threshold too. Unpriced models fall back to bare token estimates.
 //   - From 50% on, the alert TEXT additionally spells out a /compact
 //     recommendation plus that same top-consumers list inline.
 //   - Work-boundary nudges (issue #21, baseline v2.1 in the issue comments):
@@ -31,15 +33,21 @@
 //     skipped entirely for them (fail-open — absent fields on older CC keep
 //     current behavior). Tier alerts still run (main-chain usage is filtered
 //     inside currentContext regardless of who triggered the event).
-//   - After compaction (usage drops below the alerted tier) tiers reset, so
-//     the ladder re-arms.
+//   - After compaction (usage drops below the alerted tier) tiers reset and the
+//     stale HUD cache is cleared, so the ladder re-arms; the HUD is then
+//     repopulated from the post-compaction transcript on that same event.
+//   - Between crossings the HUD cache is topped up on a time throttle
+//     (ACP_CTX_BUDGET_REFRESH_SEC), so it survives a compaction/reload and long
+//     stretches inside one tier band instead of only refreshing on an upward
+//     crossing (the gap that used to leave it blank at low ctx%).
 //
 // Context size comes from the transcript: the last main-chain assistant entry
 // carries `message.usage` (input + cache_read + cache_creation = what the last
 // turn actually sent) and `message.model` (reused for the cost estimate — same
-// entry, no extra read). Only the file TAIL (~256KB) is read per event; the
-// full transcript is streamed only on a new-tier crossing (to refresh
-// attribution), never on the per-event fast path.
+// entry, no extra read). Only the file TAIL (~256KB) is read per event. The
+// full transcript is streamed to refresh the HUD cache on a new-tier crossing
+// and, at most once per REFRESH_MS, between crossings — never unthrottled on
+// the per-event fast path.
 // Compaction boundaries are `{"type":"system","subtype":"compact_boundary"}`
 // entries (format pinned against a real compacted transcript).
 //
@@ -48,11 +56,15 @@
 // ACP_CTX_BUDGET_COMPACT_PCT (default 50), ACP_CTX_BUDGET_STEP (default 10),
 // ACP_CTX_BUDGET_NUDGE_MIN_TOK (boundary-nudge absolute floor, default
 // min(200000, WINDOW*COMPACT_PCT/100) — preserves the old 50% behaviour on a
-// 200k window), ACP_CTX_BUDGET_NUDGE_COST (cost segment on/off, default on),
-// ACP_CTX_BUDGET_SUMMARY_OUT_TOK (summary-output approximation for the cost
-// estimate, default 3000), ACP_CTX_BUDGET_DATA_DIR (nudge-ledger directory,
-// default $XDG_DATA_HOME/acp/ctx-budget or ~/.local/share/acp/ctx-budget —
-// persistent, unlike the tmpdir state).
+// 200k window), ACP_CTX_BUDGET_NUDGE_COST (ALL $ figures on/off — nudge segment
+// AND the HUD costs/rents, default on), ACP_CTX_BUDGET_SUMMARY_OUT_TOK
+// (summary-output approximation for the cost estimate, default 3000),
+// ACP_CTX_BUDGET_TOP_N (consumer count, default 3), ACP_CTX_BUDGET_REFRESH_SEC
+// (max HUD staleness, default 120), ACP_CTX_BUDGET_DATA_DIR (nudge-ledger
+// directory, default $XDG_DATA_HOME/acp/ctx-budget or
+// ~/.local/share/acp/ctx-budget — persistent, unlike the tmpdir state). The
+// statusline advisory has its own thresholds (ADVISE/RECOMMEND/URGENT_PCT) —
+// see statusline.mjs.
 
 import {
   openSync,
@@ -76,7 +88,7 @@ import {
   failOpen,
 } from "../../lib/hook-io.mjs";
 import { topConsumers, fmtK } from "./attribution.mjs";
-import { priceFor } from "../../lib/pricing.mjs";
+import { priceFor, CACHE_READ_MULT, fmtUsd } from "../../lib/pricing.mjs";
 import {
   matchBoundary,
   recordGenStart,
@@ -106,6 +118,12 @@ const NUDGE_MIN_TOK = positiveEnv(
 );
 const NUDGE_COST = process.env.ACP_CTX_BUDGET_NUDGE_COST !== "0";
 const SUMMARY_OUT_TOK = positiveEnv("ACP_CTX_BUDGET_SUMMARY_OUT_TOK", 3000);
+// Max staleness of the HUD cache before an ordinary event refreshes it (even
+// without a tier crossing). This is what keeps the HUD populated after a
+// compaction / reload / while sitting inside one tier band, instead of only on
+// an upward crossing. Throttled so the transcript is streamed at most once per
+// this interval, never per event.
+const REFRESH_MS = positiveEnv("ACP_CTX_BUDGET_REFRESH_SEC", 120) * 1000;
 
 // ---- state (per transcript = per context) ----------------------------------
 function transcriptHash(transcriptPath) {
@@ -148,6 +166,69 @@ function logNudge(entry) {
     appendFileSync(join(dir, "nudges.jsonl"), JSON.stringify(entry) + "\n");
   } catch {
     // measurement is garnish; never block the message
+  }
+}
+
+// ---- statusline HUD cache -----------------------------------------------------
+// What the always-on statusline reads back: top consumers plus the whole-context
+// costs. Consumers are priced as a per-turn re-read "rent" (tokens × cache-read
+// rate — what keeping that family in context bills EVERY turn). A consumer's
+// CUMULATIVE $ is deliberately not shown: it would need each token's turn-age,
+// which isn't tracked — the per-turn rate is the honest, definable figure, and
+// it pairs with the one-time compact cost ("spend $X once vs keep paying $Y").
+// The compact cost reuses nudge.mjs's costSegment — the SAME warm-cache estimate
+// the boundary nudges print, gated by the same ACP_CTX_BUDGET_NUDGE_COST knob —
+// so the HUD and the nudge never quote different prices for the same action.
+// Unpriced models fall back to bare token estimates and omit both costs.
+async function hudPatch(transcriptPath, tokens, model) {
+  const items = await topConsumers(transcriptPath, TOP_N);
+  if (items.length === 0) return null;
+  const rates = NUDGE_COST ? priceFor(model) : null;
+  const tops = items.map((it) =>
+    rates
+      ? `${it.label} ~${fmtUsd((it.tokens * rates.input * CACHE_READ_MULT) / 1e6)}/턴 (${it.calls}회)`
+      : `${it.label} ~${fmtK(it.tokens)} tok (${it.calls}회)`,
+  );
+  const patch = { top: tops[0], tops };
+  if (rates) {
+    patch.turnCost = (tokens * rates.input * CACHE_READ_MULT) / 1e6;
+    patch.compactCost = costSegment({
+      tokens,
+      model,
+      priceFor,
+      summaryOutTok: SUMMARY_OUT_TOK,
+      enabled: true, // NUDGE_COST already gated via `rates`
+    }).estUsd;
+  }
+  return patch;
+}
+
+// Persist a HUD patch onto the LATEST state (a racing sibling may have claimed
+// a tier/boundary meanwhile — merge, don't clobber). Costs are deleted before
+// the merge so a model switch to an unpriced id can't leave stale $ behind.
+function saveHudPatch(sp, patch, now) {
+  const latest = loadState(sp);
+  delete latest.turnCost;
+  delete latest.compactCost;
+  saveState(sp, { ...latest, ...patch, topTs: now });
+}
+
+// Recompute the HUD cache from the transcript, at most once per REFRESH_MS
+// (unless `force`). Tier crossings alone can strand the HUD blank: right after
+// a compaction/reload the cache is empty, and inside a wide tier band nothing
+// crosses for a long time — so an ordinary tool call (or a UserPromptSubmit)
+// tops it up here. Streams the full transcript, so the throttle is what keeps
+// this off the per-event fast path. Best-effort: any failure — or an empty
+// result (no tool calls since the last boundary yet) — leaves the cache as-is.
+async function refreshHud(sp, transcriptPath, now, force, tokens, model) {
+  const cur = loadState(sp);
+  if (!force && typeof cur.topTs === "number" && now - cur.topTs < REFRESH_MS)
+    return;
+  try {
+    const patch = await hudPatch(transcriptPath, tokens, model);
+    if (patch) saveHudPatch(sp, patch, now);
+  } catch {
+    // best-effort garnish; keep whatever's cached
   }
 }
 
@@ -267,14 +348,26 @@ try {
     const cur = loadState(sp);
     let { upd, dirty } = lifetimeBookkeeping({ ...cur });
     const curTier = typeof cur.lastTier === "number" ? cur.lastTier : 0;
-    if (tier < curTier) {
+    const compacted = tier < curTier;
+    if (compacted) {
       upd.lastTier = tier; // compaction dropped usage -> re-arm the ladder
-      delete upd.top; // pre-compaction consumers are no longer in context
+      // pre-compaction consumers are no longer in context -> clear the whole
+      // HUD cache together (consumers, costs, freshness stamp), so it goes
+      // blank instead of showing a stale list/price until the next tier.
+      delete upd.top;
       delete upd.tops;
       delete upd.topTs;
+      delete upd.turnCost;
+      delete upd.compactCost;
       dirty = true;
     }
     if (dirty) saveState(sp, upd);
+    // Compaction drop -> repopulate immediately from the post-boundary
+    // transcript (topConsumers resets at the compact boundary), instead of
+    // sitting blank at low ctx% until the next upward crossing. Otherwise a
+    // throttled top-up keeps the HUD alive across reloads and long stretches
+    // inside one tier band.
+    await refreshHud(sp, transcriptPath, now, compacted, tokens, model);
     pass();
   }
 
@@ -359,25 +452,25 @@ try {
     let msg = `[ctx-budget] 컨텍스트 ${pct}% 사용 중 (${fmtK(tokens)} / ${fmtK(WINDOW)} tok)`;
     const compactHint = pct >= COMPACT_PCT;
     if (compactHint) msg += " — /compact 권장";
-    // Refresh the attribution cache on EVERY tier crossing, not just from
-    // COMPACT_PCT up, so the always-on HUD (statusline.mjs) can surface top
-    // consumers below the /compact threshold too — you often want to see what's
-    // filling the window well before it's time to compact. topConsumers streams
-    // the transcript, but only on a NEW-tier crossing (the tier ladder + claim-
-    // then-emit debounce it to ~once per 10% band), never on the per-event fast
-    // path. The list is APPENDED to the alert TEXT only when compactHint holds,
-    // where a "here's what to compact" list is actionable; below that it silently
-    // feeds the HUD. `tops` is the full list the HUD renders; `top` (the leader)
-    // stays written for backward compat with a pre-top3 statusline still reading
-    // it mid-session. RE-READ before this second write so a sibling that claimed
-    // a tier/merge meanwhile isn't clobbered by the stale `next` (which would
-    // drop its lastMergeTs -> duplicate nudge).
+    // Refresh the HUD cache on EVERY tier crossing, not just from COMPACT_PCT
+    // up, so the always-on HUD (statusline.mjs) can surface top consumers below
+    // the /compact threshold too — you often want to see what's filling the
+    // window well before it's time to compact. hudPatch streams the transcript,
+    // but only on a NEW-tier crossing (the tier ladder + claim-then-emit
+    // debounce it to ~once per band) or via the throttled refresh, never
+    // unthrottled on the per-event fast path. The list is APPENDED to the alert
+    // TEXT only when compactHint holds, where a "here's what to compact" list is
+    // actionable; below that it silently feeds the HUD. `tops` is the full list
+    // the HUD renders; `top` (the leader) stays written for backward compat with
+    // a pre-top3 statusline still reading it mid-session. saveHudPatch RE-READS
+    // before this second write so a sibling that claimed a tier/boundary
+    // meanwhile isn't clobbered by the stale `next` (which would drop its
+    // lastMergeTs -> duplicate nudge).
     try {
-      const top = await topConsumers(transcriptPath, TOP_N);
-      if (top.length > 0) {
-        if (compactHint) msg += `. 상위 소비: ${top.join(" · ")}`;
-        const cur = loadState(sp);
-        saveState(sp, { ...cur, top: top[0], tops: top, topTs: now });
+      const patch = await hudPatch(transcriptPath, tokens, model);
+      if (patch) {
+        if (compactHint) msg += `. 상위 소비: ${patch.tops.join(" · ")}`;
+        saveHudPatch(sp, patch, now);
       }
     } catch {
       // attribution is best-effort garnish; the alert still goes out
