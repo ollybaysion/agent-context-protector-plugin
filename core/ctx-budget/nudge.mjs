@@ -17,6 +17,8 @@
 //     work is unfinished and skips). Only same-payload captures ("PR #60",
 //     deleted branch) may use the assertive form.
 
+import { isAbsolute, join } from "node:path";
+
 // ---- labels -----------------------------------------------------------------
 
 // Branch names / PR labels only — anything outside this class is dropped so a
@@ -370,6 +372,25 @@ function dropSentence(drop) {
   if (drop?.form === "inherited")
     return `${drop.label} 작업이 이미 완료·마무리되었다면 그 ${DROP_TAIL}`;
   return `이미 완료·마무리된 과거 작업의 ${DROP_TAIL}`;
+}
+
+// ---- ledger location --------------------------------------------------------
+
+/** Where the append-only nudge ledger (nudges.jsonl) lives. Unlike the
+ *  per-transcript STATE (cooldowns, genStart labels — ephemeral by design,
+ *  tmpdir), the ledger is MEASUREMENT data: the compliance verdict (issue #29)
+ *  needs >=20 samples over up to 30 days, so it must survive reboots.
+ *  Resolution: ACP_CTX_BUDGET_DATA_DIR > $XDG_DATA_HOME/acp/ctx-budget >
+ *  ~/.local/share/acp/ctx-budget. Relative values are ignored like unset ones
+ *  (the XDG spec mandates this for XDG_DATA_HOME; a cwd-relative ledger would
+ *  scatter one file per project). Returns null when nothing resolves
+ *  (no home) — the caller skips logging, fail open. */
+export function ledgerDir(env, home) {
+  const override = env.ACP_CTX_BUDGET_DATA_DIR;
+  if (override && isAbsolute(override)) return override;
+  const xdg = env.XDG_DATA_HOME && isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : "";
+  const base = xdg || (home ? join(home, ".local", "share") : "");
+  return base ? join(base, "acp", "ctx-budget") : null;
 }
 
 /** Terminal-boundary nudge. keep clause is a constant — never omitted. */

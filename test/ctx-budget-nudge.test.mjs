@@ -20,6 +20,7 @@ import {
   terminalMessage,
   startMessage,
   sanitizeLabel,
+  ledgerDir,
   GEN_TTL_MS,
 } from "../core/ctx-budget/nudge.mjs";
 import { priceFor } from "../lib/pricing.mjs";
@@ -49,6 +50,12 @@ function freshTranscript(tokens, model = "claude-fable-5") {
   return tp;
 }
 
+// Every hook subprocess gets the ledger pinned into a per-run sandbox: without
+// this, each `npm test` run would append its fixture nudges to the REAL
+// persistent ledger and poison the compliance measurement (issue #31 — the
+// live ledger was 223/224 fixture lines before this pin existed).
+const DATA_DIR = join(tmpdir(), "acp-test", `nudge-data-${process.pid}`);
+
 function runHook(tp, { command, stdout = "", stderr = "", env = {}, event } = {}) {
   const payload = event ?? {
     transcript_path: tp,
@@ -64,7 +71,13 @@ function runHook(tp, { command, stdout = "", stderr = "", env = {}, event } = {}
   );
   const raw = execFileSync(process.execPath, [CTX], {
     input: JSON.stringify(payload),
-    env: { ...base, ACP_CTX_BUDGET_WINDOW: "1000000", ACP_CTX_BUDGET_STEP: "10", ...env },
+    env: {
+      ...base,
+      ACP_CTX_BUDGET_WINDOW: "1000000",
+      ACP_CTX_BUDGET_STEP: "10",
+      ACP_CTX_BUDGET_DATA_DIR: DATA_DIR,
+      ...env,
+    },
     encoding: "utf8",
   });
   if (!raw.trim()) return null;
@@ -488,13 +501,13 @@ test("⑥′ terminal-first order: a suppressed start match still records genSta
 
 test("⑫′ log path unwritable: nudge still goes out (fail-open, review f5)", () => {
   const iso = join(tmpdir(), "acp-test", `nudge-failopen-${process.pid}-${Date.now()}`);
-  // occupy the log FILE path with a DIRECTORY -> appendFileSync EISDIR
-  mkdirSync(join(iso, "acp", "ctx-budget", "nudges.jsonl"), { recursive: true });
+  // occupy the ledger FILE path with a DIRECTORY -> appendFileSync EISDIR
+  mkdirSync(join(iso, "nudges.jsonl"), { recursive: true });
   const tp = freshTranscript(320000);
   const msg = runHook(tp, {
     command: "gh pr create",
     stdout: "https://github.com/o/r/pull/70\n",
-    env: { TMPDIR: iso },
+    env: { ACP_CTX_BUDGET_DATA_DIR: iso },
   });
   assert.ok(msg.includes("작업 경계 감지")); // message survives the log failure
 });
@@ -525,7 +538,7 @@ test("⑫ nudge log line lands with byteOffset + cost fields (fail-open elsewher
   const tp = freshTranscript(320000);
   runHook(tp, { command: "gh pr create", stdout: "https://github.com/o/r/pull/63\n" });
   const hash = createHash("sha1").update(tp).digest("hex").slice(0, 16);
-  const log = readFileSync(join(tmpdir(), "acp", "ctx-budget", "nudges.jsonl"), "utf8")
+  const log = readFileSync(join(DATA_DIR, "nudges.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l))
@@ -540,6 +553,49 @@ test("⑫ nudge log line lands with byteOffset + cost fields (fail-open elsewher
   assert.equal(e.costShown, "on");
   assert.equal(e.estUsd, 0.5);
   assert.equal(e.model, "claude-fable-5");
+});
+
+// ---- ledger location (issue #31) --------------------------------------------
+
+test("ledger dir resolution: override > XDG_DATA_HOME > ~/.local/share > null", () => {
+  assert.equal(ledgerDir({ ACP_CTX_BUDGET_DATA_DIR: "/x/y" }, "/home/u"), "/x/y");
+  assert.equal(
+    ledgerDir({ XDG_DATA_HOME: "/xdg" }, "/home/u"),
+    join("/xdg", "acp", "ctx-budget"),
+  );
+  assert.equal(
+    ledgerDir({}, "/home/u"),
+    join("/home/u", ".local", "share", "acp", "ctx-budget"),
+  );
+  // empty strings are "unset", never a relative-path ledger
+  assert.equal(
+    ledgerDir({ ACP_CTX_BUDGET_DATA_DIR: "", XDG_DATA_HOME: "" }, "/home/u"),
+    join("/home/u", ".local", "share", "acp", "ctx-budget"),
+  );
+  // relative values are ignored like unset ones (XDG spec) — no cwd-relative ledger
+  assert.equal(
+    ledgerDir({ ACP_CTX_BUDGET_DATA_DIR: "rel/dir", XDG_DATA_HOME: "also-rel" }, "/home/u"),
+    join("/home/u", ".local", "share", "acp", "ctx-budget"),
+  );
+  assert.equal(ledgerDir({}, ""), null); // nowhere to write -> caller skips
+});
+
+test("ledger default path e2e: without the override the XDG data dir is used", () => {
+  const xdg = join(tmpdir(), "acp-test", `nudge-xdg-${process.pid}-${Date.now()}`);
+  const tp = freshTranscript(320000);
+  runHook(tp, {
+    command: "gh pr create",
+    stdout: "https://github.com/o/r/pull/65\n",
+    env: { ACP_CTX_BUDGET_DATA_DIR: "", XDG_DATA_HOME: xdg },
+  });
+  const hash = createHash("sha1").update(tp).digest("hex").slice(0, 16);
+  const lines = readFileSync(join(xdg, "acp", "ctx-budget", "nudges.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .filter((e) => e.transcriptHash === hash);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].dropLabel, "PR #65");
 });
 
 test("⑭ env ACP_CTX_BUDGET_NUDGE_COST=0 removes the cost segment end-to-end", () => {
