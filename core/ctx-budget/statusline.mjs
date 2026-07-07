@@ -11,13 +11,15 @@
 // The extra bits Claude Code does NOT provide come from ctx-budget's per-
 // transcript state file (written on tier crossings + a throttled refresh, read
 // back here by reproducing the same state path from transcript_path):
-//   - top consumers, each as a per-turn $ "rent" (what it costs to keep that
+//   - the LEADING consumer, as a per-turn $ "rent" (what it costs to keep that
 //     pattern family in context every turn) — or a bare token estimate when the
-//     model is unpriced. Rendered LAST so a narrow bar truncates it, not the ctx
+//     model is unpriced. Leader only (the full top-N list lives in the >=50%
+//     alerts); rendered LAST so a narrow bar truncates it, not the ctx
 //     %/advisory ahead of it.
 //   - turnCost / compactCost: the whole-context per-turn re-read cost and the
 //     one-time cost of compacting now. The compact cost rides inline with the
-//     advisory ("/compact 고려 ($0.4)"); the turn cost is its own segment.
+//     advisory ("/compact 고려 ($0.4)"); the turn cost is its own segment
+//     ("~$0.24/turn").
 //
 // Fail-open is absolute: any parse/read error prints an empty line and exits 0.
 // A blank status line is the safe degradation — never crash the user's bar.
@@ -95,14 +97,16 @@ function readHud(transcriptPath) {
     if (!s) return EMPTY_HUD;
     if (typeof s.topTs !== "number" || Date.now() - s.topTs > TOP_MAX_AGE_MS)
       return EMPTY_HUD;
-    // `tops` (full list) is what the HUD renders; fall back to the legacy `top`
-    // leader for state written by a pre-top3 release still live in this session.
+    // The HUD renders the LEADER only — one consumer is enough to answer "what
+    // is filling the window" at a glance, and the bar is width-constrained now
+    // that the cost segments ride ahead of it. The full top-N list still
+    // surfaces in the >=50% tier alerts (ctx-budget caches it under `tops`).
     let topStr = null;
-    if (Array.isArray(s.tops)) {
+    if (typeof s.top === "string" && s.top !== "") topStr = s.top;
+    if (!topStr && Array.isArray(s.tops)) {
       const items = s.tops.filter((x) => typeof x === "string" && x !== "");
-      if (items.length > 0) topStr = items.join(" · ");
+      if (items.length > 0) topStr = items[0];
     }
-    if (!topStr && typeof s.top === "string" && s.top !== "") topStr = s.top;
     const numOrNull = (v) =>
       typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
     return {
@@ -136,7 +140,7 @@ try {
   // whole-context per-turn re-read cost: what each message currently bills just
   // to re-send the context. Right after the advisory, both being "should I
   // compact?" signals.
-  if (hud.turnCost != null) segments.push(`턴 ~${fmtUsd(hud.turnCost)}`);
+  if (hud.turnCost != null) segments.push(`~${fmtUsd(hud.turnCost)}/turn`);
 
   const h5 = pctInt(input?.rate_limits?.five_hour?.used_percentage);
   if (h5 !== null) segments.push(`5h ${h5}%`);

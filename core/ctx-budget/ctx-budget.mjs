@@ -186,7 +186,7 @@ async function hudPatch(transcriptPath, tokens, model) {
   const rates = NUDGE_COST ? priceFor(model) : null;
   const tops = items.map((it) =>
     rates
-      ? `${it.label} ~${fmtUsd((it.tokens * rates.input * CACHE_READ_MULT) / 1e6)}/턴 (${it.calls}회)`
+      ? `${it.label} ~${fmtUsd((it.tokens * rates.input * CACHE_READ_MULT) / 1e6)}/turn (${it.calls}회)`
       : `${it.label} ~${fmtK(it.tokens)} tok (${it.calls}회)`,
   );
   const patch = { top: tops[0], tops };

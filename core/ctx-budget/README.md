@@ -22,7 +22,7 @@ to fix) timely and evidence-based.
 - **From 50% on:** the alert adds `— /compact 권장` plus attribution — the top
   3 context consumers since the last compaction boundary, each priced as a
   per-turn re-read **rent** (what keeping that pattern family in context bills
-  every turn: `상위 소비: npm test ~$0.032/턴 (4회) · git diff ~$0.008/턴 (2회) · …`),
+  every turn: `상위 소비: npm test ~$0.032/turn (4회) · git diff ~$0.008/turn (2회) · …`),
   computed from tool_use/tool_result pairs in the transcript. Unpriced models
   fall back to token estimates (`~9.2k tok`). Attribution streams the
   transcript on tier crossings and at most once per `REFRESH_SEC` in between,
@@ -192,7 +192,7 @@ the Claude Code status bar that also carries a **standing /compact advisory**,
 so the recommendation persists instead of vanishing with the message:
 
 ```text
-ctx 24% · /compact 고려 ($0.4) · 턴 ~$0.24 · 5h 41% · 7d 27% · top npm test ~$0.032/턴 (4회)
+ctx 24% · /compact 고려 ($0.4) · ~$0.24/turn · 5h 41% · 7d 27% · top npm test ~$0.032/turn (4회)
 ```
 
 - **`ctx`** — context-window %, straight from the statusline JSON's
@@ -213,20 +213,22 @@ ctx 24% · /compact 고려 ($0.4) · 턴 ~$0.24 · 5h 41% · 7d 27% · top npm t
   surfaces them as one-shot copy-paste instruction nudges (see Behaviour); a
   persistent "경계 지시문 대기" statusline segment stays deferred (open
   question in issue #21).
-- **`턴 ~$y`** — the whole-context **per-turn re-read cost**: what each message
-  currently bills just to re-send the accumulated context (warm cache-read
-  rate). Pairs with the advisory's compact cost — *spend `$x` once, or keep
-  paying `$y` every turn*.
+- **`~$y/turn`** — the whole-context **per-turn re-read cost**: what each
+  message currently bills just to re-send the accumulated context (warm
+  cache-read rate). Pairs with the advisory's compact cost — *spend `$x` once,
+  or keep paying `$y` every turn*.
 - **`5h` / `7d`** — plan-quota usage from `rate_limits.five_hour` /
   `rate_limits.seven_day`. These reflect your subscription's rolling limits,
   independent of context.
-- **`top`** — the top context consumers, each as a per-turn **rent** (its share
+- **`top`** — the LEADING context consumer, as a per-turn **rent** (its share
   of the turn cost) with a call count, read back from the ctx-budget state file
   (refreshed on tier crossings + the `REFRESH_SEC` throttle; cleared on
-  compaction, dropped after 1h). A consumer's *cumulative* $ is deliberately
-  not shown: it would need each token's turn-age, which isn't tracked — the
-  per-turn rate is the honest, decision-relevant figure. Unpriced models show
-  token estimates instead.
+  compaction, dropped after 1h). Leader only — one family answers "what is
+  filling the window" at a glance; the full top-N list still appears in the
+  ≥ 50% tier alerts. A consumer's *cumulative* $ is deliberately not shown: it
+  would need each token's turn-age, which isn't tracked — the per-turn rate is
+  the honest, decision-relevant figure. Unpriced models show token estimates
+  instead.
 
 Every segment is omitted when its field is absent, and any error prints a blank
 line — it never crashes your status bar.
