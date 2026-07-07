@@ -2,6 +2,11 @@
 // transcripts drive the REAL script as a subprocess (statusline-hud.test.mjs
 // style), and we assert on the advice state file it writes via the same
 // advicePath() the statusline HUD reads from.
+//
+// The verdict is always-on: every judgeable turn records either a "적합" fit
+// verdict or, in the one flaggable cell (expensive model × conversational
+// streak), a downgrade recommendation. Only an unjudgeable tail (window
+// underrun) or a disabled module writes nothing.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -53,38 +58,62 @@ function readAdvice(transcriptPath) {
   }
 }
 
-test("light streak (6+ of 8) on an expensive model -> advice recorded", () => {
+// --- Verdict matrix: model (expensive/cheap) × work mode (대화형/작업형) ---
+
+test("expensive × conversational streak -> downgrade recommended", () => {
   const tp = freshTranscriptPath();
   const lines = [heavy("claude-fable-5"), heavy("claude-fable-5"), ...Array.from({ length: 6 }, () => light("claude-fable-5"))];
   writeFileSync(tp, lines.join("\n") + "\n");
 
   runAdvisor(tp, here);
   const advice = readAdvice(tp);
-  assert.ok(advice, "expected advice to be recorded");
+  assert.ok(advice, "expected a verdict");
   assert.equal(advice.model, "claude-fable-5");
-  assert.match(advice.text, /\/model sonnet 권장\(8중 6턴 대화형\)/);
+  assert.match(advice.text, /\/model sonnet 권장\(대화형 8중 6\)/);
   assert.equal(typeof advice.ts, "number");
 });
 
-test("heavy session -> advice cleared", () => {
+test("expensive × work streak -> fit(작업형), never a recommendation", () => {
   const tp = freshTranscriptPath();
   const lines = [...Array.from({ length: 5 }, () => heavy("claude-fable-5")), ...Array.from({ length: 3 }, () => light("claude-fable-5"))];
   writeFileSync(tp, lines.join("\n") + "\n");
 
   runAdvisor(tp, here);
-  assert.equal(readAdvice(tp), null);
+  const advice = readAdvice(tp);
+  assert.ok(advice, "always-on: a fit verdict is still recorded on an expensive model doing real work");
+  assert.equal(advice.model, "claude-fable-5");
+  assert.match(advice.text, /모델 적합\(작업형\)/);
+  assert.doesNotMatch(advice.text, /권장/);
 });
 
-test("non-expensive model (sonnet) -> advice cleared", () => {
+test("cheap × conversational -> fit(대화형)", () => {
   const tp = freshTranscriptPath();
   const lines = Array.from({ length: 8 }, () => light("claude-sonnet-5"));
   writeFileSync(tp, lines.join("\n") + "\n");
 
   runAdvisor(tp, here);
-  assert.equal(readAdvice(tp), null);
+  const advice = readAdvice(tp);
+  assert.ok(advice, "always-on: cheap models still get a fit verdict (never silent)");
+  assert.equal(advice.model, "claude-sonnet-5");
+  assert.match(advice.text, /모델 적합\(대화형\)/);
+  assert.doesNotMatch(advice.text, /권장/);
 });
 
-test("window underrun (3 entries) -> advice cleared (can't judge)", () => {
+test("cheap × work streak -> fit(작업형)", () => {
+  const tp = freshTranscriptPath();
+  const lines = [...Array.from({ length: 5 }, () => heavy("claude-sonnet-5")), ...Array.from({ length: 3 }, () => light("claude-sonnet-5"))];
+  writeFileSync(tp, lines.join("\n") + "\n");
+
+  runAdvisor(tp, here);
+  const advice = readAdvice(tp);
+  assert.ok(advice);
+  assert.equal(advice.model, "claude-sonnet-5");
+  assert.match(advice.text, /모델 적합\(작업형\)/);
+});
+
+// --- Robustness ---
+
+test("window underrun (3 entries) -> no verdict (can't judge)", () => {
   const tp = freshTranscriptPath();
   const lines = Array.from({ length: 3 }, () => light("claude-fable-5"));
   writeFileSync(tp, lines.join("\n") + "\n");
@@ -95,17 +124,21 @@ test("window underrun (3 entries) -> advice cleared (can't judge)", () => {
 
 test("isSidechain entries don't pollute the mainline judgment", () => {
   const tp = freshTranscriptPath();
-  const sidechainNoise = Array.from({ length: 4 }, () => assistantLine({ model: "claude-fable-5", tools: ["Edit"], isSidechain: true }));
-  const mainline = [heavy("claude-fable-5"), heavy("claude-fable-5"), ...Array.from({ length: 6 }, () => light("claude-fable-5"))];
-  // Interleave so a naive implementation that doesn't filter isSidechain would
-  // see heavy tool calls within its window and wrongly clear the advice.
-  const lines = [sidechainNoise[0], mainline[0], sidechainNoise[1], mainline[1], sidechainNoise[2], ...mainline.slice(2), sidechainNoise[3]];
+  // Mainline is a pure conversational streak (8 light) -> filtered verdict = 권장.
+  // A trailing block of 4 sidechain heavies sits at the tail; a naive impl that
+  // doesn't filter isSidechain would count them in its window, drop the light
+  // count below threshold, and downgrade the verdict to 적합(작업형). Asserting
+  // 권장 makes the filter the thing under test.
+  const mainline = Array.from({ length: 8 }, () => light("claude-fable-5"));
+  const sidechainTail = Array.from({ length: 4 }, () => assistantLine({ model: "claude-fable-5", tools: ["Edit"], isSidechain: true }));
+  const lines = [...mainline, ...sidechainTail];
   writeFileSync(tp, lines.join("\n") + "\n");
 
   runAdvisor(tp, here);
   const advice = readAdvice(tp);
-  assert.ok(advice, "sidechain noise must not suppress the mainline advice");
+  assert.ok(advice);
   assert.equal(advice.model, "claude-fable-5");
+  assert.match(advice.text, /권장/, "sidechain noise must not downgrade the mainline verdict");
 });
 
 test("trailing <synthetic> entry is ignored, judged by the prior real model", () => {
@@ -115,8 +148,9 @@ test("trailing <synthetic> entry is ignored, judged by the prior real model", ()
 
   runAdvisor(tp, here);
   const advice = readAdvice(tp);
-  assert.ok(advice, "expected advice judged from the last real model");
+  assert.ok(advice, "expected a verdict judged from the last real model");
   assert.equal(advice.model, "claude-fable-5");
+  assert.match(advice.text, /권장/);
 });
 
 test("broken JSONL lines are skipped without crashing", () => {
@@ -127,11 +161,11 @@ test("broken JSONL lines are skipped without crashing", () => {
 
   runAdvisor(tp, here);
   const advice = readAdvice(tp);
-  assert.ok(advice, "expected advice despite broken lines in the tail");
+  assert.ok(advice, "expected a verdict despite broken lines in the tail");
   assert.equal(advice.model, "claude-fable-5");
 });
 
-test("config disabled -> advice cleared", () => {
+test("config disabled -> no verdict", () => {
   const tp = freshTranscriptPath();
   const lines = Array.from({ length: 8 }, () => light("claude-fable-5"));
   writeFileSync(tp, lines.join("\n") + "\n");
@@ -144,7 +178,7 @@ test("config disabled -> advice cleared", () => {
   assert.equal(readAdvice(tp), null);
 });
 
-test("advisor.enabled:false -> advice cleared", () => {
+test("advisor.enabled:false -> no verdict", () => {
   const tp = freshTranscriptPath();
   const lines = Array.from({ length: 8 }, () => light("claude-fable-5"));
   writeFileSync(tp, lines.join("\n") + "\n");
