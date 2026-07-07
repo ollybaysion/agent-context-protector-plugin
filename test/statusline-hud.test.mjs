@@ -72,19 +72,19 @@ function run({ topN, contextTokens = 8000, model = "claude-fable-5" } = {}) {
   return { alert, hud };
 }
 
-test("HUD shows the LEADER as per-turn rent + turn/compact costs; the alert lists all three", () => {
+test("HUD shows the LEADER as per-call rent + call/compact costs; the alert lists all three", () => {
   const { alert, hud } = run({ contextTokens: 8000 }); // 80%
-  // HUD: leader only, priced as per-turn rent — the bar is width-constrained.
+  // HUD: leader only, priced as per-call rent — the bar is width-constrained.
   assert.ok(hud.includes("npm test"), hud);
   assert.ok(!hud.includes("git diff"), `HUD is leader-only: ${hud}`);
   assert.ok(!hud.includes("Read(*.md)"), `HUD is leader-only: ${hud}`);
   const tail = hud.slice(hud.indexOf("top "));
-  assert.ok(/\/turn/.test(tail), `leader should be per-turn $ rent: ${tail}`);
+  assert.ok(/\/call/.test(tail), `leader should be per-call $ rent: ${tail}`);
   // Advisory at 80% is the urgent tier, and carries the one-time compact $.
   assert.ok(hud.includes("/compact 권장"), hud);
   assert.ok(hud.includes("곧 자동압축"), hud);
   assert.match(hud, /\/compact 권장.*\(\$[\d.]+\)/, hud); // inline compact cost
-  assert.match(hud, /~\$[\d.]+\/turn/, hud); // whole-context per-turn cost segment
+  assert.match(hud, /~\$[\d.]+\/call/, hud); // whole-context per-call cost segment
   // Alert text (>=COMPACT_PCT): /compact rec + the FULL top-N attribution.
   assert.match(alert, /컨텍스트 80%/);
   assert.ok(alert.includes("/compact 권장"), alert);
@@ -98,7 +98,7 @@ test("below the recommend gate the HUD advises '고려' (not 권장) and stays p
   assert.ok(hud.includes("/compact 고려"), hud); // size-based, non-mandatory
   assert.ok(!hud.includes("권장"), hud); // not yet the recommend tier
   assert.match(hud, /\(\$[\d.]+\)/, hud); // compact cost still shown
-  assert.match(hud, /~\$[\d.]+\/turn/, hud);
+  assert.match(hud, /~\$[\d.]+\/call/, hud);
   // Alert fires the tier line but must NOT recommend /compact or list consumers
   // (the HOOK's COMPACT_PCT gate is unchanged at 50%).
   assert.match(alert, /컨텍스트 30%/);
@@ -111,7 +111,7 @@ test("unpriced model: consumers fall back to token estimates, no $ anywhere", ()
   assert.ok(hud.includes("npm test"), hud);
   assert.ok(/~[\d.]+k? tok/.test(hud), `token estimate fallback: ${hud}`);
   assert.ok(!hud.includes("$"), `no $ for unpriced model: ${hud}`);
-  assert.ok(!hud.includes("/turn"), hud);
+  assert.ok(!hud.includes("/call"), hud);
   assert.ok(hud.includes("/compact 권장"), hud); // advisory still fires, sans cost
 });
 

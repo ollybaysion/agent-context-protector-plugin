@@ -11,15 +11,15 @@
 // The extra bits Claude Code does NOT provide come from ctx-budget's per-
 // transcript state file (written on tier crossings + a throttled refresh, read
 // back here by reproducing the same state path from transcript_path):
-//   - the LEADING consumer, as a per-turn $ "rent" (what it costs to keep that
-//     pattern family in context every turn) — or a bare token estimate when the
-//     model is unpriced. Leader only (the full top-N list lives in the >=50%
+//   - the LEADING consumer, as a per-CALL $ "rent" (what re-sending that pattern
+//     family bills on each assistant API call) — or a bare token estimate when
+//     the model is unpriced. Leader only (the full top-N list lives in the >=50%
 //     alerts); rendered LAST so a narrow bar truncates it, not the ctx
 //     %/advisory ahead of it.
-//   - turnCost / compactCost: the whole-context per-turn re-read cost and the
+//   - callCost / compactCost: the whole-context per-call re-read cost and the
 //     one-time cost of compacting now. The compact cost rides inline with the
-//     advisory ("/compact 고려 ($0.4)"); the turn cost is its own segment
-//     ("~$0.24/turn").
+//     advisory ("/compact 고려 ($0.4)"); the call cost is its own segment
+//     ("~$0.24/call").
 //
 // Fail-open is absolute: any parse/read error prints an empty line and exits 0.
 // A blank status line is the safe degradation — never crash the user's bar.
@@ -67,7 +67,7 @@ const fmtCompactUsd = (n) => `$${n < 0.095 ? n.toFixed(2) : n.toFixed(1)}`;
 
 // Always-on advisory keyed off the LIVE context %. The one-time compact cost (if
 // cached & priced) rides in parens — "spend this once" — paired across the bar
-// with each consumer's per-turn rent ("keep paying this"). Below ADVISE_PCT the
+// with each consumer's per-call rent ("keep paying this"). Below ADVISE_PCT the
 // session is small enough that compaction isn't worth mentioning.
 function recommend(pct, compactCost) {
   const c = compactCost != null ? ` (${fmtCompactUsd(compactCost)})` : "";
@@ -83,10 +83,10 @@ function pctInt(v) {
     : null;
 }
 
-const EMPTY_HUD = { topStr: null, turnCost: null, compactCost: null };
+const EMPTY_HUD = { topStr: null, callCost: null, compactCost: null };
 
 // Read ctx-budget's cached HUD state: the top-consumer string plus the whole-
-// context turn/compact costs. All three are gated on ONE freshness stamp
+// context call/compact costs. All three are gated on ONE freshness stamp
 // (topTs) because ctx-budget writes them together — a missing/stale stamp means
 // stale or foreign state, so we trust none of it (the HUD self-heals).
 function readHud(transcriptPath) {
@@ -111,7 +111,7 @@ function readHud(transcriptPath) {
       typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
     return {
       topStr,
-      turnCost: numOrNull(s.turnCost),
+      callCost: numOrNull(s.callCost),
       compactCost: numOrNull(s.compactCost),
     };
   } catch {
@@ -137,10 +137,10 @@ try {
     // always-on advisory (+ inline one-time compact $ when cached) keyed off ctx%
     segments.push(recommend(ctx, hud.compactCost));
   }
-  // whole-context per-turn re-read cost: what each message currently bills just
-  // to re-send the context. Right after the advisory, both being "should I
-  // compact?" signals.
-  if (hud.turnCost != null) segments.push(`~${fmtUsd(hud.turnCost)}/turn`);
+  // whole-context per-call re-read cost: what each assistant API call currently
+  // bills just to re-send the context. Right after the advisory, both being
+  // "should I compact?" signals.
+  if (hud.callCost != null) segments.push(`~${fmtUsd(hud.callCost)}/call`);
 
   const h5 = pctInt(input?.rate_limits?.five_hour?.used_percentage);
   if (h5 !== null) segments.push(`5h ${h5}%`);

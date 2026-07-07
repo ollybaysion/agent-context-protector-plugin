@@ -9,7 +9,7 @@
 //   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중"). Each
 //     crossing also refreshes the cache the always-on statusline HUD reads:
 //     top pattern families since the last compaction boundary (attribution.mjs),
-//     each priced as a per-turn re-read "rent", plus the whole-context per-turn
+//     each priced as a per-CALL re-read "rent", plus the whole-context per-call
 //     cost and the one-time compact cost (same costSegment estimate the nudges
 //     print) — so the HUD shows what context is costing below the /compact
 //     threshold too. Unpriced models fall back to bare token estimates.
@@ -171,14 +171,15 @@ function logNudge(entry) {
 
 // ---- statusline HUD cache -----------------------------------------------------
 // What the always-on statusline reads back: top consumers plus the whole-context
-// costs. Consumers are priced as a per-turn re-read "rent" (tokens × cache-read
-// rate — what keeping that family in context bills EVERY turn). A consumer's
-// CUMULATIVE $ is deliberately not shown: it would need each token's turn-age,
-// which isn't tracked — the per-turn rate is the honest, definable figure, and
-// it pairs with the one-time compact cost ("spend $X once vs keep paying $Y").
-// The compact cost reuses nudge.mjs's costSegment — the SAME warm-cache estimate
-// the boundary nudges print, gated by the same ACP_CTX_BUDGET_NUDGE_COST knob —
-// so the HUD and the nudge never quote different prices for the same action.
+// costs. Consumers are priced as a per-CALL re-read "rent" (tokens × cache-read
+// rate — what re-sending that family bills on each assistant API call; a "turn"
+// can be several calls, so /call is the precise unit). A consumer's CUMULATIVE $
+// is deliberately not shown: it would need each token's call-age, which isn't
+// tracked — the per-call rate is the honest, definable figure, and it pairs with
+// the one-time compact cost ("spend $X once vs keep paying $Y per call"). The
+// compact cost reuses nudge.mjs's costSegment — the SAME warm-cache estimate the
+// boundary nudges print, gated by the same ACP_CTX_BUDGET_NUDGE_COST knob — so
+// the HUD and the nudge never quote different prices for the same action.
 // Unpriced models fall back to bare token estimates and omit both costs.
 async function hudPatch(transcriptPath, tokens, model) {
   const items = await topConsumers(transcriptPath, TOP_N);
@@ -186,12 +187,12 @@ async function hudPatch(transcriptPath, tokens, model) {
   const rates = NUDGE_COST ? priceFor(model) : null;
   const tops = items.map((it) =>
     rates
-      ? `${it.label} ~${fmtUsd((it.tokens * rates.input * CACHE_READ_MULT) / 1e6)}/turn (${it.calls}회)`
+      ? `${it.label} ~${fmtUsd((it.tokens * rates.input * CACHE_READ_MULT) / 1e6)}/call (${it.calls}회)`
       : `${it.label} ~${fmtK(it.tokens)} tok (${it.calls}회)`,
   );
   const patch = { top: tops[0], tops };
   if (rates) {
-    patch.turnCost = (tokens * rates.input * CACHE_READ_MULT) / 1e6;
+    patch.callCost = (tokens * rates.input * CACHE_READ_MULT) / 1e6;
     patch.compactCost = costSegment({
       tokens,
       model,
@@ -208,7 +209,7 @@ async function hudPatch(transcriptPath, tokens, model) {
 // the merge so a model switch to an unpriced id can't leave stale $ behind.
 function saveHudPatch(sp, patch, now) {
   const latest = loadState(sp);
-  delete latest.turnCost;
+  delete latest.callCost;
   delete latest.compactCost;
   saveState(sp, { ...latest, ...patch, topTs: now });
 }
@@ -357,7 +358,7 @@ try {
       delete upd.top;
       delete upd.tops;
       delete upd.topTs;
-      delete upd.turnCost;
+      delete upd.callCost;
       delete upd.compactCost;
       dirty = true;
     }
