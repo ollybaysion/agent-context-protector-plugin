@@ -140,43 +140,12 @@ const pat = (label) => {
 const CAP_MARKER = /output-cap: dropped (\d+) of \d+ chars/g;
 
 // ---- cost estimation -----------------------------------------------------------
-// $/MTok base list prices (input, output). Derived rates: cache read 0.1x input,
-// cache write 1.25x (5m TTL) / 2x (1h TTL). Every transcript usage entry carries
-// message.model (verified 6,007/6,007 on real data, 2026-07-04), so cost is
-// applied per entry — mid-session model switches price correctly. Model ids
-// resolve by longest-prefix match so dated full ids ("claude-haiku-4-5-20251001")
-// hit their alias row. Unknown models (e.g. "<synthetic>") are NEVER guessed:
-// they go to an unpriced bucket and are reported, not silently priced.
-// NOTE: these are API list prices — for subscription (Max) usage the $ figures
-// are an API-equivalent reference, not an actual bill.
-const PRICE_BASIS = "2026-06 list $/MTok";
-const PRICES = [
-  ["claude-fable-5", { input: 10, output: 50 }],
-  ["claude-mythos-5", { input: 10, output: 50 }],
-  ["claude-opus-4-8", { input: 5, output: 25 }],
-  ["claude-opus-4-7", { input: 5, output: 25 }],
-  ["claude-opus-4-6", { input: 5, output: 25 }],
-  ["claude-opus-4-5", { input: 5, output: 25 }],
-  ["claude-opus-4-1", { input: 15, output: 75 }],
-  ["claude-opus-4-0", { input: 15, output: 75 }],
-  ["claude-opus-4-2", { input: 15, output: 75 }], // dated full id claude-opus-4-20250514
-  ["claude-sonnet-5", { input: 3, output: 15 }], // intro $2/$10 through 2026-08-31; list price used
-  ["claude-sonnet-4-6", { input: 3, output: 15 }],
-  ["claude-sonnet-4-5", { input: 3, output: 15 }],
-  ["claude-sonnet-4-2", { input: 3, output: 15 }], // dated full id claude-sonnet-4-20250514
-  ["claude-sonnet-4-0", { input: 3, output: 15 }],
-  ["claude-haiku-4-5", { input: 1, output: 5 }],
-].sort((a, b) => b[0].length - a[0].length); // longest prefix wins
-
-const priceCache = new Map();
-function priceFor(model) {
-  if (typeof model !== "string" || model === "") return null;
-  if (priceCache.has(model)) return priceCache.get(model);
-  const hit = PRICES.find(([k]) => model.startsWith(k));
-  const p = hit ? hit[1] : null;
-  priceCache.set(model, p);
-  return p;
-}
+// Pricing table + longest-prefix resolver moved to lib/pricing.mjs — SINGLE
+// SOURCE shared with core/ctx-budget's nudge cost segment (same contract as
+// lib/gate-rules.mjs). Every transcript usage entry carries message.model
+// (verified 6,007/6,007 on real data, 2026-07-04), so cost is applied per
+// entry — mid-session model switches price correctly.
+import { PRICE_BASIS, priceFor } from "../../lib/pricing.mjs";
 
 // A corrupted transcript line must never poison totals (fail-open): one
 // string/object/negative usage field would otherwise NaN every $ figure in
