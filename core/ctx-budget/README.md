@@ -20,10 +20,13 @@ to fix) timely and evidence-based.
   next tier is crossed. When usage drops back down (compaction), the ladder
   re-arms automatically.
 - **From 50% on:** the alert adds `— /compact 권장` plus attribution — the top
-  3 context consumers since the last compaction boundary
-  (`상위 소비: Bash(npm test…) ~9.2k tok · Read(DESIGN.md) ~3.1k tok · …`),
-  computed from tool_use/tool_result pairs in the transcript. Attribution runs
-  only when an alert actually fires.
+  3 context consumers since the last compaction boundary, each priced as a
+  per-call re-read **rent** (what re-sending that pattern family bills on each
+  assistant API call: `상위 소비: npm test ~$0.032/call (4회) · git diff ~$0.008/call (2회) · …`),
+  computed from tool_use/tool_result pairs in the transcript. Unpriced models
+  fall back to token estimates (`~9.2k tok`). Attribution streams the
+  transcript on tier crossings and at most once per `REFRESH_SEC` in between,
+  never unthrottled per event.
 - **Boundary nudge (issue #21, baseline v2.1 in the issue comments):** a
   work-boundary moment gets a **copy-paste `/compact` instruction**, not just a
   reminder. Gate = boundary rule hit ∧ context ≥ `NUDGE_MIN_TOK` **absolute
@@ -123,16 +126,24 @@ before extending any parsing, and always fail open.
 | Env var | Default | Meaning |
 | --- | --- | --- |
 | `ACP_CTX_BUDGET_WINDOW` | `200000` | Context window in tokens. **Set this to your model's real window** — percentages are only as truthful as this value. |
-| `ACP_CTX_BUDGET_COMPACT_PCT` | `50` | From this % on, alerts add the /compact recommendation + attribution, and merge nudges arm. **Also the statusline advisory's 여유 → 권장 threshold** (shared so the HUD and the alerts agree). |
-| `ACP_CTX_BUDGET_URGENT_PCT` | `80` | Statusline advisory only: from this % on, the reason becomes `곧 자동 압축`. |
+| `ACP_CTX_BUDGET_COMPACT_PCT` | `50` | Hook-side gate: from this % on, tier alerts add the /compact recommendation + inline attribution. (The statusline advisory has its own ladder below.) |
 | `ACP_CTX_BUDGET_STEP` | `10` | Tier width in percent. |
+| `ACP_CTX_BUDGET_TOP_N` | `3` | Consumer families the alert lists and the HUD keeps. |
+| `ACP_CTX_BUDGET_REFRESH_SEC` | `120` | Max HUD-cache staleness before an ordinary event refreshes it (keeps the HUD populated between tier crossings / right after a compaction). |
 | `ACP_CTX_BUDGET_NUDGE_MIN_TOK` | `min(200000, WINDOW×COMPACT_PCT/100)` | Boundary-nudge absolute floor in tokens. The default preserves the old 50% behaviour on a 200k window and caps at 200k on big windows (below it, compacting is a net loss: summary cost + cache reset for ~no gain). |
-| `ACP_CTX_BUDGET_NUDGE_COST` | on (`0` to disable) | Cost-estimate segment in boundary nudges. |
-| `ACP_CTX_BUDGET_SUMMARY_OUT_TOK` | `3000` | Summary-output approximation used by the cost estimate. |
+| `ACP_CTX_BUDGET_NUDGE_COST` | on (`0` to disable) | ALL $ figures: the nudge cost segment AND the HUD costs/rents (one knob so the module never half-prices). |
+| `ACP_CTX_BUDGET_SUMMARY_OUT_TOK` | `3000` | Summary-output approximation used by the compact-cost estimate (nudge segment and HUD advisory share it). |
 | `ACP_CTX_BUDGET_DATA_DIR` | `$XDG_DATA_HOME/acp/ctx-budget`, else `~/.local/share/acp/ctx-budget` | Directory of the persistent nudge ledger (`nudges.jsonl`). The test harness pins this to a sandbox so `npm test` can never pollute the real ledger. |
+| `ACP_CTX_BUDGET_ADVISE_PCT` | `8` | Statusline advisory: from this % on, `/compact 고려`. |
+| `ACP_CTX_BUDGET_RECOMMEND_PCT` | `35` | Statusline advisory: from this % on, `/compact 권장`. |
+| `ACP_CTX_BUDGET_URGENT_PCT` | `70` | Statusline advisory: from this % on, `곧 자동압축` (near where Claude Code auto-compacts). |
 
-State (last tier alerted, shared boundary cooldown, cached top consumers,
-`genStart`/`genDone` labels) lives per transcript at
+The advisory ladder is calibrated on 41 real 1M-window sessions (peaks are
+bottom-heavy: p50≈16%, p75≈36%, max≈66%), so a flat 50% gate fired in only ~17%
+of them; `8 / 35 / 70` covers roughly the top 75% and keeps each step meaningful.
+
+State (last tier alerted, shared boundary cooldown, cached consumers +
+turn/compact costs, `genStart`/`genDone` labels) lives per transcript at
 `os.tmpdir()/acp/ctx-budget/<hash>.json` — ephemeral by design; losing it only
 means one repeated alert or one label-less generic nudge. The nudge ledger is
 the opposite: it is measurement data, so it lives in the persistent data dir
@@ -145,13 +156,14 @@ at observed rates.
 
 Three surfaces recommend `/compact` and they answer **different questions**,
 so they can legitimately disagree at the same moment — on a 1M window at
-~320k, the statusline advisory says `여유` (capacity view: auto-compact is far)
-while a boundary nudge says `적기` (opportunity view: a work unit just closed
-and every later turn re-sends those tokens as cache reads). Both are correct.
+~320k, the statusline advisory says `/compact 고려` in its mildest tone
+(capacity view: 32% is size-worth-considering, not urgent) while a boundary
+nudge says `적기` emphatically (opportunity view: a work unit just closed and
+every later turn re-sends those tokens as cache reads). Both are correct.
 
 | Channel | When | Question it answers |
 | --- | --- | --- |
-| statusline advisory (`여유`/`권장`) | always-on | how full is the window (% — capacity) |
+| statusline advisory (`여유`/`고려`/`권장`) | always-on | how full is the window (% — capacity), and what compacting now costs |
 | tier alerts | on a tier crossing | what filled it (attribution) |
 | **boundary nudge** | at a work boundary | is NOW a good moment, and what to keep (absolute tokens — opportunity) |
 | CLAUDE.md `Compact Instructions` (below) | auto-compact fallback | static keep rules when no nudge was pasted |
@@ -180,32 +192,44 @@ the Claude Code status bar that also carries a **standing /compact advisory**,
 so the recommendation persists instead of vanishing with the message:
 
 ```text
-ctx 62% · /compact 권장(절반 넘음) · 5h 41% · 7d 27% · top Bash(npm test…) ~31k tok
+ctx 24% · /compact 고려 ($0.4) · ~$0.24/call · 5h 41% · 7d 27% · top npm test ~$0.032/call (4회)
 ```
 
 - **`ctx`** — context-window %, straight from the statusline JSON's
   pre-computed `context_window.used_percentage` (no transcript parsing on the
   render path).
-- **advisory** — an always-on `/compact` recommendation keyed off that same
-  `ctx` %, with the reason in parentheses (the point of the segment is the
-  *why*). Three tiers, thresholds shared with the hook:
-  - `여유(컴팩트 불필요)` — below `ACP_CTX_BUDGET_COMPACT_PCT` (50%): compacting
-    a small context is a net loss, so it says so.
-  - `/compact 권장(절반 넘음)` — from 50% on.
-  - `/compact 권장(곧 자동 압축)` — from `ACP_CTX_BUDGET_URGENT_PCT` (80%),
-    near where Claude Code auto-compacts.
+- **advisory** — an always-on, size-based `/compact` suggestion keyed off that
+  same `ctx` %, worded as a recommendation, never a mandate. When the model is
+  priced, the **one-time cost of compacting now** rides in parens — the same
+  warm-cache estimate (and display precision) the boundary nudges print, so the
+  two surfaces never quote different prices. Four steps (thresholds in Config):
+  - `여유` — below 8%: too small to bother.
+  - `/compact 고려 ($x)` — from 8%.
+  - `/compact 권장 ($x)` — from 35%, a genuinely large session.
+  - `/compact 권장 · 곧 자동압축 ($x)` — from 70%, near auto-compact.
 
   Shown only when `ctx` % is present (older Claude Code without the field →
   segment omitted, like the others). Boundary moments are the hook's job — it
   surfaces them as one-shot copy-paste instruction nudges (see Behaviour); a
   persistent "경계 지시문 대기" statusline segment stays deferred (open
   question in issue #21).
+- **`~$y/call`** — the whole-context **per-call re-read cost**: what each
+  assistant API call currently bills just to re-send the accumulated context
+  (warm cache-read rate). Note one user message can drive several calls (one per
+  tool round-trip), so a "turn" is a multiple of this. Pairs with the advisory's
+  compact cost — *spend `$x` once, or keep paying `$y` every call*.
 - **`5h` / `7d`** — plan-quota usage from `rate_limits.five_hour` /
   `rate_limits.seven_day`. These reflect your subscription's rolling limits,
   independent of context.
-- **`top`** — the leading context consumer, read back from the ctx-budget
-  state file (populated once an attribution alert fires, i.e. ≥ 50% context;
-  cleared on compaction, dropped after 1h).
+- **`top`** — the LEADING context consumer, as a per-call **rent** (its share
+  of the call cost) with a call count, read back from the ctx-budget state file
+  (refreshed on tier crossings + the `REFRESH_SEC` throttle; cleared on
+  compaction, dropped after 1h). Leader only — one family answers "what is
+  filling the window" at a glance; the full top-N list still appears in the
+  ≥ 50% tier alerts. A consumer's *cumulative* $ is deliberately not shown: it
+  would need each token's call-age, which isn't tracked — the per-call rate is
+  the honest, decision-relevant figure. Unpriced models show token estimates
+  instead.
 
 Every segment is omitted when its field is absent, and any error prints a blank
 line — it never crashes your status bar.
