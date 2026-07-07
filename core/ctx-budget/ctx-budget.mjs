@@ -62,9 +62,11 @@
 // ACP_CTX_BUDGET_TOP_N (consumer count, default 3), ACP_CTX_BUDGET_REFRESH_SEC
 // (max HUD staleness, default 120), ACP_CTX_BUDGET_DATA_DIR (nudge-ledger
 // directory, default $XDG_DATA_HOME/acp/ctx-budget or
-// ~/.local/share/acp/ctx-budget — persistent, unlike the tmpdir state). The
-// statusline advisory has its own thresholds (ADVISE/RECOMMEND/URGENT_PCT) —
-// see statusline.mjs.
+// ~/.local/share/acp/ctx-budget — persistent, unlike the tmpdir state),
+// ACP_CTX_BUDGET_OBS (set to "0" to disable the NudgeFired emit to the local
+// observability collector, issue #32; collector host/port via OBS_HOST/OBS_PORT,
+// default 127.0.0.1:4090). The statusline advisory has its own thresholds
+// (ADVISE/RECOMMEND/URGENT_PCT) — see statusline.mjs.
 
 import {
   openSync,
@@ -99,6 +101,7 @@ import {
   startMessage,
   ledgerDir,
 } from "./nudge.mjs";
+import { emitNudgeFired } from "../../lib/obs-client.mjs";
 
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
@@ -408,6 +411,7 @@ try {
   saveState(sp, next);
 
   const messages = [];
+  let nudgeEntry = null; // captured for the observability emit below (issue #32)
   if (wantBoundary) {
     const cost = costSegment({
       tokens,
@@ -434,7 +438,10 @@ try {
     } catch {
       // offset is measurement garnish too
     }
-    logNudge({
+    // Build the ledger row ONCE and reuse it as the emit payload, so the
+    // nudges.jsonl line and the NudgeFired event are byte-for-byte identical
+    // (issue #32).
+    nudgeEntry = {
       ts: now,
       transcriptHash: transcriptHash(transcriptPath),
       kind: found.rule.key,
@@ -447,7 +454,8 @@ try {
       estUsd: cost.estUsd,
       model,
       costShown: cost.costShown,
-    });
+    };
+    logNudge(nudgeEntry);
   }
   if (wantTier) {
     let msg = `[ctx-budget] 컨텍스트 ${pct}% 사용 중 (${fmtK(tokens)} / ${fmtK(WINDOW)} tok)`;
@@ -478,6 +486,12 @@ try {
     }
     messages.push(msg);
   }
+  // Mirror the just-logged nudge to the local observability collector (issue
+  // #32). AWAITED, not fire-and-forget: emitSystemMessage() below does a sync
+  // write + process.exit(), which would truncate a detached POST (F2). A down
+  // or absent collector resolves immediately (ECONNREFUSED) and never delays
+  // the nudge; ACP_CTX_BUDGET_OBS=0 disables the emit entirely.
+  if (nudgeEntry) await emitNudgeFired({ entry: nudgeEntry, input, now });
   emitSystemMessage(messages.join("\n"));
 } catch (err) {
   failOpen(

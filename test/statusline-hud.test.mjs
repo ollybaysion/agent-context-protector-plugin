@@ -54,6 +54,9 @@ function run({ topN, contextTokens = 8000, model = "claude-fable-5" } = {}) {
     ...process.env,
     ACP_CTX_BUDGET_WINDOW: String(WINDOW),
     ACP_CTX_BUDGET_DATA_DIR: join(tmpdir(), "acp-test", `hud-data-${process.pid}`),
+    // Same rationale as ctx-budget-nudge.test.mjs: this file spawns the real
+    // ctx-budget.mjs, so kill the obs emit too (issue #32 F1).
+    ACP_CTX_BUDGET_OBS: "0",
   };
   if (topN != null) env.ACP_CTX_BUDGET_TOP_N = String(topN);
 

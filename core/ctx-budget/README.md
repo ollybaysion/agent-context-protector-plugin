@@ -134,6 +134,8 @@ before extending any parsing, and always fail open.
 | `ACP_CTX_BUDGET_NUDGE_COST` | on (`0` to disable) | ALL $ figures: the nudge cost segment AND the HUD costs/rents (one knob so the module never half-prices). |
 | `ACP_CTX_BUDGET_SUMMARY_OUT_TOK` | `3000` | Summary-output approximation used by the compact-cost estimate (nudge segment and HUD advisory share it). |
 | `ACP_CTX_BUDGET_DATA_DIR` | `$XDG_DATA_HOME/acp/ctx-budget`, else `~/.local/share/acp/ctx-budget` | Directory of the persistent nudge ledger (`nudges.jsonl`). The test harness pins this to a sandbox so `npm test` can never pollute the real ledger. |
+| `ACP_CTX_BUDGET_OBS` | on (`0` to disable) | When a boundary nudge fires, also POST a `NudgeFired` event to the local observability collector (issue #32). `0` disables the emit entirely. |
+| `OBS_HOST` / `OBS_PORT` | `127.0.0.1` / `4090` | Collector address for the `NudgeFired` emit. `OBS_TOKEN` adds a bearer header if the collector requires auth. |
 | `ACP_CTX_BUDGET_ADVISE_PCT` | `8` | Statusline advisory: from this % on, `/compact 고려`. |
 | `ACP_CTX_BUDGET_RECOMMEND_PCT` | `35` | Statusline advisory: from this % on, `/compact 권장`. |
 | `ACP_CTX_BUDGET_URGENT_PCT` | `70` | Statusline advisory: from this % on, `곧 자동압축` (near where Claude Code auto-compacts). |
@@ -151,6 +153,20 @@ the opposite: it is measurement data, so it lives in the persistent data dir
 measurement samples, never behaviour — writes stay fail-open. No rotation on
 purpose: ~250 bytes per fired nudge under a 5-minute cooldown is ≲60 KB/year
 at observed rates.
+
+The same fired nudge is also mirrored to the local observability collector as a
+`NudgeFired` event (issue #32), so the dashboard can show when/why nudges fire.
+The event `payload` is the ledger row unchanged, so the two never drift. This is
+a second, INDEPENDENT measurement channel (a loopback HTTP POST, not a shared
+module — the emitter in `lib/obs-client.mjs` is a hand-kept copy of claude-hooks'
+`obs-client.mjs`): the collector being down or absent never affects the nudge or
+the ledger (`ECONNREFUSED` resolves immediately), and `ACP_CTX_BUDGET_OBS=0`
+turns it off. Because it is a separate channel, the test harness pins
+`ACP_CTX_BUDGET_OBS=0` on every hook subprocess — the same discipline as the
+`ACP_CTX_BUDGET_DATA_DIR` sandbox — so `npm test` can pollute neither the ledger
+nor a live collector. The ledger, not this event stream, stays the source of
+truth for compliance math: a collector outage makes the dashboard count a lower
+bound, never wrong.
 
 ## Which channel says what
 
