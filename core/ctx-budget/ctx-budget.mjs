@@ -6,10 +6,13 @@
 // type /compact; on that event there is no tool payload, so boundary rules
 // simply don't apply and the tier ladder still debounces everything.
 //
-//   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중").
-//   - From 50% on, the alert adds a /compact recommendation plus the top
-//     context consumers since the last compaction boundary, grouped by pattern
-//     family with cumulative tokens + call counts (attribution.mjs).
+//   - Every 10% tier crossed upward -> one alert ("컨텍스트 N% 사용 중"). Each
+//     crossing also refreshes the attribution cache the always-on statusline
+//     HUD reads (top pattern families since the last compaction boundary, with
+//     cumulative tokens + call counts — attribution.mjs), so the HUD can show
+//     consumers below the /compact threshold too.
+//   - From 50% on, the alert TEXT additionally spells out a /compact
+//     recommendation plus that same top-consumers list inline.
 //   - A successful-looking `gh pr merge` at >=50% context gets its own nudge:
 //     a merge is a clean semantic boundary, so it is the best /compact moment.
 //   - After compaction (usage drops below the alerted tier) tiers reset, so
@@ -18,7 +21,8 @@
 // Context size comes from the transcript: the last main-chain assistant entry
 // carries `message.usage` (input + cache_read + cache_creation = what the last
 // turn actually sent). Only the file TAIL (~256KB) is read per event; the full
-// transcript is streamed only when an attribution alert actually fires.
+// transcript is streamed only on a new-tier crossing (to refresh attribution),
+// never on the per-event fast path.
 // Compaction boundaries are `{"type":"system","subtype":"compact_boundary"}`
 // entries (format pinned against a real compacted transcript).
 //
@@ -55,6 +59,10 @@ function positiveEnv(name, dflt) {
 const WINDOW = positiveEnv("ACP_CTX_BUDGET_WINDOW", 200000);
 const COMPACT_PCT = positiveEnv("ACP_CTX_BUDGET_COMPACT_PCT", 50);
 const STEP = positiveEnv("ACP_CTX_BUDGET_STEP", 10);
+// How many consumer families the alert lists AND the statusline HUD keeps
+// always-on. Same N for both so the momentary alert and the persistent HUD
+// agree; dial down if the HUD line runs too wide for your terminal.
+const TOP_N = positiveEnv("ACP_CTX_BUDGET_TOP_N", 3);
 
 // ---- state (per transcript = per context) ----------------------------------
 function statePath(transcriptPath) {
@@ -237,23 +245,30 @@ try {
   }
   if (wantTier) {
     let msg = `[ctx-budget] 컨텍스트 ${pct}% 사용 중 (${fmtK(tokens)} / ${fmtK(WINDOW)} tok)`;
-    if (pct >= COMPACT_PCT) {
-      msg += " — /compact 권장";
-      try {
-        const top = await topConsumers(transcriptPath);
-        if (top.length > 0) {
-          msg += `. 상위 소비: ${top.join(" · ")}`;
-          // Cache the leader for the statusline HUD (statusline.mjs) — it can't
-          // stream the transcript per render, so it reads this back. topConsumers
-          // above can take a while; RE-READ before this second write so a sibling
-          // that claimed a tier/merge in the meantime isn't clobbered by the
-          // stale `next` (which would drop its lastMergeTs -> duplicate nudge).
-          const cur = loadState(sp);
-          saveState(sp, { ...cur, top: top[0], topTs: now });
-        }
-      } catch {
-        // attribution is best-effort garnish; the alert still goes out
+    const compactHint = pct >= COMPACT_PCT;
+    if (compactHint) msg += " — /compact 권장";
+    // Refresh the attribution cache on EVERY tier crossing, not just from
+    // COMPACT_PCT up, so the always-on HUD (statusline.mjs) can surface top
+    // consumers below the /compact threshold too — you often want to see what's
+    // filling the window well before it's time to compact. topConsumers streams
+    // the transcript, but only on a NEW-tier crossing (the tier ladder + claim-
+    // then-emit debounce it to ~once per 10% band), never on the per-event fast
+    // path. The list is APPENDED to the alert TEXT only when compactHint holds,
+    // where a "here's what to compact" list is actionable; below that it silently
+    // feeds the HUD. `tops` is the full list the HUD renders; `top` (the leader)
+    // stays written for backward compat with a pre-top3 statusline still reading
+    // it mid-session. RE-READ before this second write so a sibling that claimed
+    // a tier/merge meanwhile isn't clobbered by the stale `next` (which would
+    // drop its lastMergeTs -> duplicate nudge).
+    try {
+      const top = await topConsumers(transcriptPath, TOP_N);
+      if (top.length > 0) {
+        if (compactHint) msg += `. 상위 소비: ${top.join(" · ")}`;
+        const cur = loadState(sp);
+        saveState(sp, { ...cur, top: top[0], tops: top, topTs: now });
       }
+    } catch {
+      // attribution is best-effort garnish; the alert still goes out
     }
     messages.push(msg);
   }
