@@ -8,10 +8,13 @@
 //   context_window.used_percentage        -> ctx %
 //   rate_limits.five_hour.used_percentage -> 5h session-quota %
 //   rate_limits.seven_day.used_percentage -> 7d weekly-quota %
-// The one extra bit is the top context consumer, which Claude Code does NOT
-// provide: ctx-budget caches it into its per-transcript state file when an
-// attribution alert fires (>=50%), and we read it back here by reproducing the
-// same state path from transcript_path.
+// The one extra bit is the top context consumers, which Claude Code does NOT
+// provide: ctx-budget caches them (the ACP_CTX_BUDGET_TOP_N pattern families,
+// default 3) into its per-transcript state file on every 10% tier crossing (so
+// they show below the /compact threshold too), and we read them back here by
+// reproducing the same state path from transcript_path. The consumers segment
+// is rendered LAST, so if the bar is too narrow and truncates, the ctx
+// %/advisory ahead of it survive.
 //
 // Fail-open is absolute: any parse/read error prints an empty line and exits 0.
 // A blank status line is the safe degradation — never crash the user's bar.
@@ -67,10 +70,17 @@ function readTop(transcriptPath) {
   if (typeof transcriptPath !== "string" || transcriptPath === "") return null;
   try {
     const s = JSON.parse(readFileSync(statePath(transcriptPath), "utf8"));
-    if (!s || typeof s.top !== "string" || s.top === "") return null;
+    if (!s) return null;
     if (typeof s.topTs === "number" && Date.now() - s.topTs > TOP_MAX_AGE_MS)
       return null;
-    return s.top;
+    // `tops` (full list) is what the HUD renders; fall back to the legacy `top`
+    // leader for state written by a pre-top3 release still live in this session.
+    if (Array.isArray(s.tops)) {
+      const items = s.tops.filter((x) => typeof x === "string" && x !== "");
+      if (items.length > 0) return items.join(" · ");
+    }
+    if (typeof s.top === "string" && s.top !== "") return s.top;
+    return null;
   } catch {
     return null; // missing/corrupt state -> no top segment
   }
