@@ -24,8 +24,10 @@ export const fmtK = (n) =>
 // but an unknown-command basename or file extension can still carry them.)
 export const cleanLabel = (s) => s.replace(/[\s\x00-\x1f\x7f]+/g, " ").trim();
 
-// Scan the transcript and return up to `topN` formatted lines, each a pattern
-// family with its cumulative token estimate and call count, biggest first.
+// Scan the transcript and return up to `topN` pattern families, biggest first,
+// each as { label, tokens (cumulative estimate), calls }. Formatting (tok vs
+// per-turn $) is the caller's job — ctx-budget prices it against the model; a
+// bare token estimate is the fallback when the model is unpriced.
 export async function topConsumers(transcriptPath, topN = 3) {
   const pending = new Map(); // tool_use_id -> {label, inputChars}
   let sums = new Map(); // pattern label -> {chars, calls}
@@ -78,8 +80,9 @@ export async function topConsumers(transcriptPath, topN = 3) {
   return [...sums.entries()]
     .sort((a, b) => b[1].chars - a[1].chars)
     .slice(0, topN)
-    .map(
-      ([label, { chars, calls }]) =>
-        `${label} ~${fmtK(Math.round(chars / 4))} tok (${calls}회)`,
-    );
+    .map(([label, { chars, calls }]) => ({
+      label,
+      tokens: Math.round(chars / 4),
+      calls,
+    }));
 }
