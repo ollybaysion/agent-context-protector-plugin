@@ -93,11 +93,14 @@ to fix) timely and evidence-based.
     on subscription plans it is a quota-burn reference, not a bill, and it is
     structurally unverifiable post-hoc (compaction calls record no usage).
   - **Nudge log:** every fired nudge appends one line to
-    `os.tmpdir()/acp/ctx-budget/nudges.jsonl` (`byteOffset` = transcript size
-    at emit, template kind, labels, `estUsd`, `costShown` tri-state) — the raw
-    material for offline compliance measurement (nudge → manual
-    `compact_boundary` within the match window) and the keep-mislabel audit.
-    Log failures never block the message.
+    `$XDG_DATA_HOME/acp/ctx-budget/nudges.jsonl` (default
+    `~/.local/share/acp/ctx-budget/`, override `ACP_CTX_BUDGET_DATA_DIR`) —
+    `byteOffset` = transcript size at emit, template kind, labels, `estUsd`,
+    `costShown` tri-state — the raw material for offline compliance
+    measurement (nudge → manual `compact_boundary` within the match window)
+    and the keep-mislabel audit. Persistent on purpose: the compliance verdict
+    (#29) needs ≥20 samples over up to 30 days, which a tmpdir ledger would
+    lose on every reboot (#31). Log failures never block the message.
   - **Forward-predicate ban (invariant):** every input to a firing decision is
     a fact that already exists at fire time (just-arrived payload evidence,
     current usage, recorded labels). No rule may wait on "no reappearance for
@@ -126,13 +129,17 @@ before extending any parsing, and always fail open.
 | `ACP_CTX_BUDGET_NUDGE_MIN_TOK` | `min(200000, WINDOW×COMPACT_PCT/100)` | Boundary-nudge absolute floor in tokens. The default preserves the old 50% behaviour on a 200k window and caps at 200k on big windows (below it, compacting is a net loss: summary cost + cache reset for ~no gain). |
 | `ACP_CTX_BUDGET_NUDGE_COST` | on (`0` to disable) | Cost-estimate segment in boundary nudges. |
 | `ACP_CTX_BUDGET_SUMMARY_OUT_TOK` | `3000` | Summary-output approximation used by the cost estimate. |
+| `ACP_CTX_BUDGET_DATA_DIR` | `$XDG_DATA_HOME/acp/ctx-budget`, else `~/.local/share/acp/ctx-budget` | Directory of the persistent nudge ledger (`nudges.jsonl`). The test harness pins this to a sandbox so `npm test` can never pollute the real ledger. |
 
 State (last tier alerted, shared boundary cooldown, cached top consumers,
 `genStart`/`genDone` labels) lives per transcript at
 `os.tmpdir()/acp/ctx-budget/<hash>.json` — ephemeral by design; losing it only
-means one repeated alert or one label-less generic nudge. The nudge log
-(`nudges.jsonl`, same directory) is equally ephemeral — losing it costs
-measurement samples, never behaviour.
+means one repeated alert or one label-less generic nudge. The nudge ledger is
+the opposite: it is measurement data, so it lives in the persistent data dir
+(see `ACP_CTX_BUDGET_DATA_DIR` above) and survives reboots. Losing it costs
+measurement samples, never behaviour — writes stay fail-open. No rotation on
+purpose: ~250 bytes per fired nudge under a 5-minute cooldown is ≲60 KB/year
+at observed rates.
 
 ## Which channel says what
 

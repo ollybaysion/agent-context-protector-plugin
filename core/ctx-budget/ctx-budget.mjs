@@ -50,7 +50,9 @@
 // min(200000, WINDOW*COMPACT_PCT/100) — preserves the old 50% behaviour on a
 // 200k window), ACP_CTX_BUDGET_NUDGE_COST (cost segment on/off, default on),
 // ACP_CTX_BUDGET_SUMMARY_OUT_TOK (summary-output approximation for the cost
-// estimate, default 3000).
+// estimate, default 3000), ACP_CTX_BUDGET_DATA_DIR (nudge-ledger directory,
+// default $XDG_DATA_HOME/acp/ctx-budget or ~/.local/share/acp/ctx-budget —
+// persistent, unlike the tmpdir state).
 
 import {
   openSync,
@@ -65,7 +67,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   readHookInput,
@@ -83,6 +85,7 @@ import {
   costSegment,
   terminalMessage,
   startMessage,
+  ledgerDir,
 } from "./nudge.mjs";
 
 function positiveEnv(name, dflt) {
@@ -132,11 +135,15 @@ function saveState(p, state) {
 }
 
 // Append-only nudge log — the raw material for offline compliance measurement
-// (analyze matches byteOffset -> later compact_boundary entries). Write
-// failures are swallowed: the nudge itself must still go out (fail open).
+// (analyze matches byteOffset -> later compact_boundary entries). Unlike the
+// tmpdir state files above, this is MEASUREMENT data (>=20 samples over up to
+// 30 days, issue #29/#31), so it lives in the XDG data dir and must survive
+// reboots. Write failures are swallowed: the nudge itself must still go out
+// (fail open).
 function logNudge(entry) {
   try {
-    const dir = join(tmpdir(), "acp", "ctx-budget");
+    const dir = ledgerDir(process.env, homedir());
+    if (!dir) return;
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "nudges.jsonl"), JSON.stringify(entry) + "\n");
   } catch {

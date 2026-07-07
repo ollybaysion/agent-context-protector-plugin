@@ -8,7 +8,7 @@
     {
       "name": "agent-context-protector",
       "description": "Context-budget protection hooks: PreToolUse deny gates + PostToolUse output capping.",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "source": "./"
     }
   ]

@@ -46,7 +46,15 @@ function run({ topN, contextTokens = 8000 } = {}) {
   ];
   writeFileSync(tp, lines.join("\n") + "\n");
 
-  const env = { ...process.env, ACP_CTX_BUDGET_WINDOW: String(WINDOW) };
+  // Pin the nudge-ledger dir even though these Read-only fixtures can never
+  // reach a boundary today: this file spawns the REAL ctx-budget.mjs, so a
+  // future Bash fixture here would otherwise write to the real persistent
+  // ledger (issue #31 — same pin as ctx-budget-nudge.test.mjs).
+  const env = {
+    ...process.env,
+    ACP_CTX_BUDGET_WINDOW: String(WINDOW),
+    ACP_CTX_BUDGET_DATA_DIR: join(tmpdir(), "acp-test", `hud-data-${process.pid}`),
+  };
   if (topN != null) env.ACP_CTX_BUDGET_TOP_N = String(topN);
 
   const ctxOut = execFileSync("node", [CTX], {

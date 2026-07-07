@@ -18,7 +18,10 @@ existing module. Strategy and rationale live in [DESIGN.md](DESIGN.md).
 Reference bundled files relative to the script (`import.meta.url` + `node:path`),
 never via absolute or project paths. `${CLAUDE_PLUGIN_ROOT}` is only for the
 `command` string in `hooks.json`, and it changes on every plugin update — never
-persist state under it; use `os.tmpdir()` instead.
+persist state under it. Disposable STATE (cooldowns, caches — losing it must be
+harmless) goes to `os.tmpdir()`; durable MEASUREMENT data (samples an offline
+report accumulates across reboots, e.g. ctx-budget's nudge ledger) goes to the
+XDG data dir (`$XDG_DATA_HOME`, default `~/.local/share`).
 
 ### Wiring example
 
