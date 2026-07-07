@@ -72,6 +72,15 @@ function advicePath(transcriptPath) {
 //   it immediately instead of waiting for the next Stop to notice.
 // `liveModelId` absent (older Claude Code, no `model.id` on stdin) -> skip ③
 // and let the next Stop's re-judgment clear it instead (one-turn lag).
+//
+// ③ compares NORMALIZED ids. statusline stdin reports the 1M variant with a
+// trailing marker (`claude-opus-4-8[1m]`, live-captured) while the transcript
+// records the bare id (`claude-opus-4-8`) the advice was written with, so a raw
+// `!==` self-erases forever on `[1m]` sessions. Stripping the trailing `[...]`
+// marker off both sides fixes the false erase while a genuine switch (opus ->
+// sonnet) still erases, since the base ids differ.
+const normModelId = (m) => (typeof m === "string" ? m.replace(/\[[^\]]*\]$/, "") : m);
+
 function readModelAdvice(transcriptPath, liveModelId) {
   if (typeof transcriptPath !== "string" || transcriptPath === "") return null;
   try {
@@ -79,7 +88,8 @@ function readModelAdvice(transcriptPath, liveModelId) {
     if (!a || typeof a.text !== "string" || a.text === "") return null; // ① exists
     if (typeof a.ts !== "number" || Date.now() - a.ts > ADVICE_MAX_AGE_MS)
       return null; // ② fresh
-    if (typeof liveModelId === "string" && liveModelId !== a.model) return null; // ③ self-erase
+    if (typeof liveModelId === "string" && normModelId(liveModelId) !== normModelId(a.model))
+      return null; // ③ self-erase (normalized; see above)
     return a.text;
   } catch {
     return null; // missing/corrupt state -> no segment

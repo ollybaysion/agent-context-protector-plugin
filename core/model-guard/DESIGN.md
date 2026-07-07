@@ -383,10 +383,14 @@ config를 열지 않는다(핫패스 규율, §4.1).
 
 v1 §9의 6항목은 **완료** (§2). advisor v2 구현 전 남은 것:
 
-- [ ] statusline stdin에 `model.id`가 실제로 오는가 (docs상 존재하나 실측
-      규율 — CC 2.1.198+ 기준 확인)
-- [ ] Stop 훅 stdin에 `transcript_path`가 오는가 (ctx-budget은
-      PostToolUse/UserPromptSubmit에서만 실측)
+- [x] statusline stdin에 `model.id`가 실제로 오는가 — **라이브 캡처로 확인
+      (2026-07-08)**: 온다. 단 1M 변형은 **접미사가 붙는다** —
+      `"claude-opus-4-8[1m]"`(display `"Opus 4.8 (1M context)"`). 트랜스크립트
+      `message.model`은 접미사 없는 `"claude-opus-4-8"`이라, 자기소거 exact-equal이
+      `[1m]` 세션에서 항상 발동하는 버그(#39)를 낳았다 → statusline ③은 말단
+      `[...]` 마커를 벗기고 비교한다. (Step-0에서 문서로만 확인하고 넘긴 대가 —
+      실측 규율을 건너뛴 결과다.)
+- [x] Stop 훅 stdin에 `transcript_path`가 오는가 — 확인(#34 Step-0 코멘트).
 - [ ] 컴팩션 직후 트랜스크립트 꼬리 형태 — window 미달로 자연 침묵하는지,
       compact_boundary 이후 턴 카운트가 맞는지
 

@@ -55,6 +55,24 @@ test("valid advice + live model diverges from advice.model -> hidden (self-erase
   assert.ok(!hud.includes("/model"), hud);
 });
 
+test("live [1m] variant matches bare advice.model -> shown (normalized)", () => {
+  const tp = freshTranscriptPath();
+  // advice.model is the bare transcript id; statusline stdin reports the 1M
+  // variant with a trailing [1m] marker (live-captured). Normalized ③ must match.
+  saveAdvice(tp, { text: "⚠ /model sonnet 권장(대화형 8중 8)", model: "claude-opus-4-8", ts: Date.now() });
+
+  const hud = runHud({ transcript_path: tp, model: { id: "claude-opus-4-8[1m]" } });
+  assert.ok(hud.includes("/model sonnet 권장"), hud);
+});
+
+test("[1m] variant of a DIFFERENT base model still self-erases", () => {
+  const tp = freshTranscriptPath();
+  saveAdvice(tp, { text: "⚠ /model sonnet 권장(대화형 8중 8)", model: "claude-opus-4-8", ts: Date.now() });
+
+  const hud = runHud({ transcript_path: tp, model: { id: "claude-sonnet-5[1m]" } });
+  assert.ok(!hud.includes("/model"), hud);
+});
+
 test("expired advice -> hidden", () => {
   const tp = freshTranscriptPath();
   const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
