@@ -44,6 +44,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/model-guard/model-advisor.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

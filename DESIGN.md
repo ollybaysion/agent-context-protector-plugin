@@ -183,6 +183,21 @@ remote-payload / output-volume(Read+Bash 뷰어). **`bash-guard`/`git-guard`와 
 (bounded 검색 선호, 파일 덤프 회피, 큰 fan-out은 subagent 위임). **버전 의존적** — 플러그인 스코프
 SessionStart 주입이 현행 버전에서 모델에 보이는지 먼저 확인 후 채택.
 
+### 6.7 `model-guard` — 토큰 예산 보호의 모델 축 · [model-advisor 활성, subagent-guard 도입 보류]
+
+컨텍스트 *양*이 아니라 세션이 *어떤 모델*로 도는지를 다룬다. 상세 설계·실측 결과는
+[core/model-guard/DESIGN.md](core/model-guard/DESIGN.md) 참고.
+
+- `model-advisor`(Stop) — ✅ 활성. 메인 세션이 대화형 Q&A만 하는데 고비용 모델(Fable/Opus)을
+  쓰고 있으면 상태파일에 기록하고, `ctx-budget`의 statusline HUD가 상시 세그먼트로 표시한다.
+  메인 세션 모델은 훅이 바꿀 수 없어 강제가 아니라 표시만 — 판정은 전부 결정적(LLM 호출 없음).
+- `subagent-guard`(PreToolUse `Task|Agent`) — 설계·스켈레톤만 존재, 도입 판단 보류. 서브에이전트
+  스폰의 `model`을 `updatedInput`으로 강제 다운그레이드하는 안이나, 실측 결과 Workflow 내부
+  `agent()` 스폰은 이 훅 자체가 안 걸리는 사각지대가 확정됐고(§4의 함정과 별개, model-guard
+  DESIGN §2), Fable 세션은 서브에이전트 모델을 sonnet으로 고정해 훅 재작성을 무시한다. 제한된
+  커버리지로도 훅을 만들 가치가 있는지, 전체 커버되는 env var(`CLAUDE_CODE_SUBAGENT_MODEL`)로
+  갈지 결정 전이라 미착수.
+
 ## 7. 구현 로드맵
 
 - **Phase 0 — 스캐폴딩:** `plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` 뼈대,

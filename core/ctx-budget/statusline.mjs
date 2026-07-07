@@ -51,6 +51,40 @@ const TOP_MAX_AGE_MS = 60 * 60 * 1000;
 // nudges (~70% of sessions reach it), RECOMMEND≈35% is a genuinely big session
 // (~top quartile), URGENT≈70% is near where Claude Code auto-compacts. Wording is
 // size-based and non-mandatory ("고려"→"권장") — the compact $ rides alongside.
+
+// Same staleness idea for model-guard's advisory: if the user stepped away
+// long enough that Stop hasn't re-judged in a while, don't keep recommending
+// a possibly-outdated model switch.
+const ADVICE_MAX_AGE_MS = positiveEnv("ACP_MODEL_ADVICE_MAX_AGE_MS", 60 * 60 * 1000);
+
+// CONTRACT: must match advicePath() in core/model-guard/lib/state.mjs, or the
+// HUD reads the wrong file and silently shows no advice segment.
+function advicePath(transcriptPath) {
+  const h = createHash("sha1").update(transcriptPath).digest("hex").slice(0, 16);
+  return join(tmpdir(), "acp", "model-guard", `${h}.json`);
+}
+
+// Read the already-decided model-advice verdict (model-advisor.mjs, Stop
+// hook) and re-validate it with 3 cheap checks -- no transcript parsing, no
+// config load here (hot-path no-I/O rule, DESIGN.md §4.1):
+//   ① exists  ② fresh  ③ self-erase: the live model has moved on from the one
+//   the advice was judged against (e.g. right after `/model sonnet`), so drop
+//   it immediately instead of waiting for the next Stop to notice.
+// `liveModelId` absent (older Claude Code, no `model.id` on stdin) -> skip ③
+// and let the next Stop's re-judgment clear it instead (one-turn lag).
+function readModelAdvice(transcriptPath, liveModelId) {
+  if (typeof transcriptPath !== "string" || transcriptPath === "") return null;
+  try {
+    const a = JSON.parse(readFileSync(advicePath(transcriptPath), "utf8"))?.modelAdvice;
+    if (!a || typeof a.text !== "string" || a.text === "") return null; // ① exists
+    if (typeof a.ts !== "number" || Date.now() - a.ts > ADVICE_MAX_AGE_MS)
+      return null; // ② fresh
+    if (typeof liveModelId === "string" && liveModelId !== a.model) return null; // ③ self-erase
+    return a.text;
+  } catch {
+    return null; // missing/corrupt state -> no segment
+  }
+}
 function positiveEnv(name, dflt) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n > 0 ? n : dflt;
@@ -147,6 +181,11 @@ try {
 
   const d7 = pctInt(input?.rate_limits?.seven_day?.used_percentage);
   if (d7 !== null) segments.push(`7d ${d7}%`);
+
+  // Pushed BEFORE `top` so a too-narrow bar truncates the consumer list first,
+  // not this advisory.
+  const advice = readModelAdvice(input?.transcript_path, input?.model?.id);
+  if (advice) segments.push(advice);
 
   if (hud.topStr) segments.push(`top ${hud.topStr}`);
 
