@@ -1,6 +1,6 @@
 {
   "name": "agent-context-protector",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Token/context budget protection for Claude Code. This file exists for the standalone analyze CLI (npx github:ollybaysion/agent-context-protector-plugin); the plugin itself loads via .claude-plugin/plugin.json.",
   "type": "module",
   "private": true,
