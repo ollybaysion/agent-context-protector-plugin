@@ -76,6 +76,10 @@ function runHook(tp, { command, stdout = "", stderr = "", env = {}, event } = {}
       ACP_CTX_BUDGET_WINDOW: "1000000",
       ACP_CTX_BUDGET_STEP: "10",
       ACP_CTX_BUDGET_DATA_DIR: DATA_DIR,
+      // Kill the NudgeFired emit so `npm test` can never inject fixture events
+      // into a live collector on 127.0.0.1:4090 (issue #32 F1 — the DATA_DIR
+      // pin above guards the ledger; this guards the OTHER measurement channel).
+      ACP_CTX_BUDGET_OBS: "0",
       ...env,
     },
     encoding: "utf8",
