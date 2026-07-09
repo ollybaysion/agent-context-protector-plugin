@@ -4,7 +4,8 @@
 //
 //   node core/analyze/analyze.mjs [--project <dir-name>] [--since <ISO>]
 //                                 [--top N] [--json out.json] [--precise]
-//                                 [--plugin-report]
+//                                 [--plugin-report] [--nudge-report]
+//                                 [--push-outcomes]
 //
 // The DEFAULT report reads only what Claude Code itself writes, so it works
 // on machines where this plugin's hooks were never installed (see also the
@@ -24,6 +25,11 @@
 //      followed each event, so the re-read multiplier is not a guess)
 //   5. inefficiency diagnostics — repeatedly-capped patterns (gate-promotion),
 //      deny→retry tracking, and gated-family activity summary
+//
+// --nudge-report reads the ctx-budget nudge ledger (nudges.jsonl, #29/#31)
+// and judges each fired boundary nudge for compliance (manual /compact inside
+// the window); --push-outcomes additionally POSTs one NudgeOutcome per judged
+// nudge to the local observability collector (implies --nudge-report).
 //
 // Totals are cumulative HISTORY spend (no compact-boundary reset — that
 // matters for live-context attribution, not for "what has been costing us").
@@ -52,6 +58,8 @@ const opt = {
   precise: false,
   full: false,
   pluginReport: false,
+  nudgeReport: false,
+  pushOutcomes: false,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -66,9 +74,13 @@ for (let i = 0; i < args.length; i++) {
     opt.full = true; // every pattern row, no top-N cut
   else if (a === "--plugin-report")
     opt.pluginReport = true; // plugin-effect sections (cap/deny ledgers, savings, inefficiencies)
+  else if (a === "--nudge-report")
+    opt.nudgeReport = true; // ctx-budget nudge compliance report (#29)
+  else if (a === "--push-outcomes")
+    opt.pushOutcomes = opt.nudgeReport = true; // report + NudgeOutcome POSTs to the collector
   else if (a === "--help" || a === "-h") {
     console.log(
-      "usage: analyze.mjs [--project <dir-name>] [--since <ISO>] [--top N | --full] [--json out.json] [--precise] [--plugin-report]",
+      "usage: analyze.mjs [--project <dir-name>] [--since <ISO>] [--top N | --full] [--json out.json] [--precise] [--plugin-report] [--nudge-report] [--push-outcomes]",
     );
     process.exit(0);
   } else {
@@ -788,6 +800,28 @@ if (opt.precise) {
     );
 }
 
+// ---- nudge compliance report (#29, opt-in) --------------------------------------
+// Computed only on request: it re-streams the matched transcripts in full
+// (per-nudge windows AND the outside-window base rate need byte offsets the
+// main scan above does not track).
+let nudgeReport = null;
+if (opt.nudgeReport) {
+  const { buildNudgeReport, renderNudgeReport, pushNudgeOutcomes } = await import(
+    "./nudge-report.mjs"
+  );
+  nudgeReport = await buildNudgeReport({ files, since: opt.since });
+  console.log("");
+  for (const line of renderNudgeReport(nudgeReport)) console.log(line);
+  if (opt.pushOutcomes) {
+    const sent = await pushNudgeOutcomes(nudgeReport);
+    console.log(
+      sent > 0
+        ? `NudgeOutcome push: ${sent} attempted (collector ${process.env.OBS_HOST || "127.0.0.1"}:${process.env.OBS_PORT || 4090}; fire-and-forget, re-run is idempotent)`
+        : `NudgeOutcome push: skipped (nothing judged${process.env.ACP_CTX_BUDGET_OBS === "0" ? ", or ACP_CTX_BUDGET_OBS=0" : ""})`,
+    );
+  }
+}
+
 if (opt.json) {
   try {
     writeFileSync(
@@ -812,6 +846,8 @@ if (opt.json) {
           proposals: [...proposals, ...gatePromotions],
           // plugin-effect data is always computed (cheap) and always in the
           // JSON, regardless of --plugin-report — only console output is gated
+          // present only when --nudge-report ran (needs its own offset scan)
+          nudges: nudgeReport,
           pluginReport: {
             capSavings: Object.fromEntries(capSavings),
             capSavedTotal,

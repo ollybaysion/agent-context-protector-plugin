@@ -105,6 +105,45 @@ sections (the default report above still prints in full).
     a consistently quiet rule under heavy traffic is worth a threshold
     check.
 
+## `--nudge-report` (ctx-budget nudge compliance, issue #29)
+
+Reads the persistent nudge ledger (`nudges.jsonl`, issue #31) and judges each
+fired boundary nudge against its transcript. The verdict logic lives in
+`nudge-report.mjs` and only there — the dashboard collector
+(agentic-claude-hooks#63) stores and displays `NudgeOutcome` events but never
+re-derives them.
+
+- **Compliance window**: from the nudge's recorded byte offset, whichever
+  comes first — 10 main-chain assistant turns (distinct `message.id`,
+  sidechains excluded), 15 minutes, or the next nudge in the same transcript
+  (the later nudge owns any compact after it). Complied = a
+  `compact_boundary` with `compactMetadata.trigger:"manual"` inside the
+  window; auto/micro compactions never count. A null byte offset degrades to
+  timestamp matching (same fallback as the receiver's join key).
+- **Base rate**: manual compacts also happen un-nudged (statusline advisory,
+  tier alerts), so the raw rate is an upper bound. `baseRateWindow` =
+  outside-window manual compacts / outside-window turns x 10, over the same
+  matched transcripts. The kill/L2 gates judge the base-rate-subtracted rate.
+- **keep-audit (n1 tripwire)**: a complied nudge whose `keepLabel` shows up
+  as a later ledger row's `dropLabel` within 30 minutes means "keep" named
+  work that was actually finishing — one confirmed case is a lifetime-rule
+  defect (issue #21). Heuristic: it only sees completions the boundary rules
+  captured.
+- **Verdict** (issue #21 criteria): judged only at ≥20 outcomes or a ≥30-day
+  ledger span — adjusted rate <10% kill / 10–30% keep / ≥30% L2 review;
+  below the gate it reports 표본 부족 and withholds judgment.
+- Ledger rows whose transcript is gone (or outside `--project`) are counted
+  as `unmatched` and excluded from the denominator.
+
+`--push-outcomes` (implies `--nudge-report`) additionally POSTs one
+`NudgeOutcome` per judged nudge to the local collector (`OBS_HOST`/`OBS_PORT`,
+default `127.0.0.1:4090`), payload
+`{ref:{transcriptHash,byteOffset,ts}, complied, horizon, keepAudit,
+baseRateWindow}` — the exact `json_extract` paths `/stats/nudges` reads.
+Re-running is idempotent (the receiver joins per nudge, last write wins);
+`ACP_CTX_BUDGET_OBS=0` suppresses the push. Fire-and-forget: a down collector
+never fails the report.
+
 ## Options
 
 | Option | Meaning |
@@ -116,6 +155,8 @@ sections (the default report above still prints in full).
 | `--json <path>` | Also write the full structured report (+ cost fields) |
 | `--precise` | usage-delta token attribution (slower, adds a column) |
 | `--plugin-report` | Add plugin-effect sections (ledgers, savings, inefficiencies) |
+| `--nudge-report` | ctx-budget nudge compliance report (ledger + transcripts) |
+| `--push-outcomes` | `--nudge-report` + POST NudgeOutcome events to the collector |
 
 `ACP_ANALYZE_ROOT` overrides the transcript root (used by tests).
 
@@ -130,6 +171,8 @@ sections (the default report above still prints in full).
 - `--json` always contains the plugin-effect data (`pluginReport` key, plus
   both proposal kinds) regardless of the flag — only console output is
   gated. It remains the hand-off shape for the observability track
-  (agentic-claude-hooks#56).
+  (agentic-claude-hooks#56). The `nudges` key is the exception: it is
+  computed (and included) only when `--nudge-report` ran, because it needs
+  its own per-offset transcript scan.
 - The root `package.json` exists solely for the npx/bin path; the Claude
   Code plugin loads via `.claude-plugin/plugin.json` and ignores it.

@@ -301,13 +301,16 @@ fan it out to both.)
   after install.
 - Token figures are chars/4 approximations — ranking is robust, absolute
   values are rough. Usage lags by half a turn.
-- Compliance (nudge → manual compact) is measurable from `nudges.jsonl` +
-  `compactMetadata.trigger:"manual"`, but it is an upper-bound signal — the
-  statusline advisory and tier alerts recommend /compact too, so judge it
-  against the boundary-free base rate (analyze report — issue #29). Kill
-  criteria live in issue #21 (≥20 nudges or 30 days: <10% → kill the
-  instruction body, ≥30% → open the L2 file-ledger review); that measurement
-  chain is NOT armed until #29 ships.
+- Compliance (nudge → manual compact) is measured from `nudges.jsonl` +
+  `compactMetadata.trigger:"manual"` by the analyze report (issue #29,
+  shipped): `node core/analyze/analyze.mjs --nudge-report`, or
+  `--push-outcomes` to also feed the dashboard's Nudges tab
+  (agentic-claude-hooks#63) with NudgeOutcome verdicts. Raw compliance is an
+  upper-bound signal — the statusline advisory and tier alerts recommend
+  /compact too — so the report subtracts the boundary-free base rate before
+  judging. Kill criteria live in issue #21 (≥20 nudges or 30 days: <10% →
+  kill the instruction body, ≥30% → open the L2 file-ledger review); the
+  report prints that verdict (or 표본 부족) every run.
 
 ## Test locally
 
