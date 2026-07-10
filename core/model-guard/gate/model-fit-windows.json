@@ -1,0 +1,527 @@
+[
+  {
+    "id": "00100868-28",
+    "model": "claude-haiku-4-5-20251001",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 126
+    }
+  },
+  {
+    "id": "00100868-5",
+    "model": "claude-haiku-4-5-20251001",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 11,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 1,
+      "medUserLen": 3589,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 143
+    }
+  },
+  {
+    "id": "099c99db-130",
+    "model": "claude-opus-4-8",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 17,
+      "thinkPresenceRate": 0.5,
+      "medOutputTokens": 552
+    }
+  },
+  {
+    "id": "099c99db-151",
+    "model": "claude-opus-4-8",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 40,
+      "thinkPresenceRate": 0.417,
+      "medOutputTokens": 747
+    }
+  },
+  {
+    "id": "099c99db-52",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 4,
+      "toolShare": 0.5,
+      "userMsgs": 4,
+      "medUserLen": 26,
+      "medAsstLen": 188,
+      "thinkPresenceRate": 0.75,
+      "medOutputTokens": 563
+    }
+  },
+  {
+    "id": "099c99db-78",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 4,
+      "toolShare": 0.5,
+      "userMsgs": 4,
+      "medUserLen": 42,
+      "medAsstLen": 251,
+      "thinkPresenceRate": 0.625,
+      "medOutputTokens": 916
+    }
+  },
+  {
+    "id": "0b27fac1-5",
+    "model": "claude-haiku-4-5-20251001",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 11,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 1,
+      "medUserLen": 2467,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 200
+    }
+  },
+  {
+    "id": "0ee4b7ae-287",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 3,
+      "textOnlyTurns": 3,
+      "toolShare": 0.5,
+      "userMsgs": 6,
+      "medUserLen": 133,
+      "medAsstLen": 206,
+      "thinkPresenceRate": 0.5,
+      "medOutputTokens": 3368
+    }
+  },
+  {
+    "id": "0ee4b7ae-304",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 1,
+      "textOnlyTurns": 4,
+      "toolShare": 0.2,
+      "userMsgs": 7,
+      "medUserLen": 134,
+      "medAsstLen": 504,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 1183
+    }
+  },
+  {
+    "id": "176b8320-1296",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 2,
+      "toolShare": 0.667,
+      "userMsgs": 6,
+      "medUserLen": 155,
+      "medAsstLen": 35,
+      "thinkPresenceRate": 0.333,
+      "medOutputTokens": 610
+    }
+  },
+  {
+    "id": "176b8320-1368",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 2,
+      "toolShare": 0.667,
+      "userMsgs": 6,
+      "medUserLen": 165,
+      "medAsstLen": 23,
+      "thinkPresenceRate": 0.667,
+      "medOutputTokens": 1080
+    }
+  },
+  {
+    "id": "176b8320-181",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 11,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 1,
+      "medUserLen": 17,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.364,
+      "medOutputTokens": 5265
+    }
+  },
+  {
+    "id": "176b8320-204",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.333,
+      "medOutputTokens": 1481
+    }
+  },
+  {
+    "id": "17f3aca6-119",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 1,
+      "toolShare": 0.8,
+      "userMsgs": 7,
+      "medUserLen": 132,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.4,
+      "medOutputTokens": 432
+    }
+  },
+  {
+    "id": "17f3aca6-142",
+    "model": "claude-fable-5",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 4,
+      "textOnlyTurns": 1,
+      "toolShare": 0.8,
+      "userMsgs": 7,
+      "medUserLen": 130,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.8,
+      "medOutputTokens": 520
+    }
+  },
+  {
+    "id": "17f3aca6-293",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.417,
+      "medOutputTokens": 1509
+    }
+  },
+  {
+    "id": "17f3aca6-410",
+    "model": "claude-fable-5",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 5,
+      "toolShare": 0,
+      "userMsgs": 7,
+      "medUserLen": 21,
+      "medAsstLen": 1869,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 3687
+    }
+  },
+  {
+    "id": "17f3aca6-66",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.583,
+      "medOutputTokens": 403
+    }
+  },
+  {
+    "id": "1a7d7645-112",
+    "model": "claude-fable-5",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.417,
+      "medOutputTokens": 1502
+    }
+  },
+  {
+    "id": "1a7d7645-4",
+    "model": "claude-fable-5",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 5,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 7,
+      "medUserLen": 134,
+      "medAsstLen": 0,
+      "thinkPresenceRate": 0.8,
+      "medOutputTokens": 343
+    }
+  },
+  {
+    "id": "28aa186d-42",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 2,
+      "textOnlyTurns": 5,
+      "toolShare": 0.286,
+      "userMsgs": 5,
+      "medUserLen": 79,
+      "medAsstLen": 1400,
+      "thinkPresenceRate": 0.857,
+      "medOutputTokens": 2027
+    }
+  },
+  {
+    "id": "2e603410-65",
+    "model": "claude-opus-4-8",
+    "consensus": "구현",
+    "features": {
+      "workTurns": 12,
+      "textOnlyTurns": 0,
+      "toolShare": 1,
+      "userMsgs": 0,
+      "medUserLen": 0,
+      "medAsstLen": 39,
+      "thinkPresenceRate": 0.5,
+      "medOutputTokens": 306
+    }
+  },
+  {
+    "id": "628823da-29",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 4,
+      "toolShare": 0,
+      "userMsgs": 8,
+      "medUserLen": 91,
+      "medAsstLen": 2977,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 5592
+    }
+  },
+  {
+    "id": "628823da-557",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 38,
+      "medAsstLen": 2505,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 5142
+    }
+  },
+  {
+    "id": "6d544728-2124",
+    "model": "claude-fable-5",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 41,
+      "medAsstLen": 781,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 1093
+    }
+  },
+  {
+    "id": "6f34b83c-2434",
+    "model": "claude-fable-5",
+    "consensus": "모호",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 1,
+      "toolShare": 0,
+      "userMsgs": 11,
+      "medUserLen": 197,
+      "medAsstLen": 992,
+      "thinkPresenceRate": 0,
+      "medOutputTokens": 789
+    }
+  },
+  {
+    "id": "976fdb7b-403",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 5,
+      "toolShare": 0,
+      "userMsgs": 7,
+      "medUserLen": 94,
+      "medAsstLen": 3076,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 3987
+    }
+  },
+  {
+    "id": "976fdb7b-428",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 5,
+      "toolShare": 0,
+      "userMsgs": 7,
+      "medUserLen": 19,
+      "medAsstLen": 4285,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 4057
+    }
+  },
+  {
+    "id": "b1e2ab6b-211",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 51,
+      "medAsstLen": 1825,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 4401
+    }
+  },
+  {
+    "id": "b1e2ab6b-288",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 19,
+      "medAsstLen": 1377,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 2683
+    }
+  },
+  {
+    "id": "f0cf3e00-183",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 50,
+      "medAsstLen": 1648,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 2707
+    }
+  },
+  {
+    "id": "f0cf3e00-208",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 50,
+      "medAsstLen": 1760,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 2822
+    }
+  },
+  {
+    "id": "f0cf3e00-252",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 11,
+      "medAsstLen": 5928,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 6113
+    }
+  },
+  {
+    "id": "f0cf3e00-280",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 9,
+      "medAsstLen": 5640,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 6181
+    }
+  },
+  {
+    "id": "f6b32ed5-607",
+    "model": "claude-opus-4-8",
+    "consensus": "설계",
+    "features": {
+      "workTurns": 0,
+      "textOnlyTurns": 6,
+      "toolShare": 0,
+      "userMsgs": 6,
+      "medUserLen": 33,
+      "medAsstLen": 1393,
+      "thinkPresenceRate": 1,
+      "medOutputTokens": 1697
+    }
+  }
+]
